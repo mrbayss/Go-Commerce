@@ -1,0 +1,11 @@
+# Secrets & Environment
+.env
+.env.*
+config.yaml
+
+# IDE
+.idea/
+.vscode/
+
+# Logs
+*.log

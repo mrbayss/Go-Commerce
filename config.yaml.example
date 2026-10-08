@@ -1,0 +1,23 @@
+app:
+  name: "GoCommerce"
+  port: "8080"
+
+postgres:
+  host: "localhost"
+  port: "5432"
+  user: "postgres"
+  pass: "your_password_here"
+  db: "gocommerce"
+  sslmode: "disable"
+  max_open_conns: 25
+  max_idle_conns: 10
+  conn_max_lifetime: "5m"
+  conn_max_idle_time: "1m"
+
+log:
+  level: "info"
+
+redis:
+  address: "localhost:6379"
+  pass: ""
+  db: 0
