@@ -2,11 +2,11 @@ package config
 
 import (
 	"errors"
+	"time"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/cors"
-	"github.com/gofiber/fiber/v3/middleware/logger"
 	"github.com/gofiber/fiber/v3/middleware/recover"
 	"github.com/gofiber/fiber/v3/middleware/requestid"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -23,6 +23,45 @@ func NewFiber(config *viper.Viper, validate *FiberValidator, log *logrus.Logger)
 		return handleError(c, err, log)
 	}
 
+	accessLogger := func(c fiber.Ctx) error {
+		start := time.Now()
+		err := c.Next()
+		latency := time.Since(start)
+
+		// Extract request ID from response header (set by requestid middleware)
+		reqID := c.GetRespHeader("X-Request-Id")
+
+		// status code response logger
+		status := c.Response().StatusCode()
+		if err != nil {
+			var fiberErr *fiber.Error
+			if errors.As(err, &fiberErr) {
+				status = fiberErr.Code
+			} else {
+				var appErr *domain.AppError
+				if errors.As(err, &appErr) {
+					status = appErr.Code
+				}
+			}
+		}
+
+		entry := log.WithFields(logrus.Fields{
+			"method":     c.Method(),
+			"path":       c.Path(),
+			"status":     status,
+			"latency_ms": float64(latency.Microseconds()) / 1000.0,
+			"rid":        reqID,
+		})
+
+		if err != nil {
+			entry.WithField("error", err.Error()).Warn("request completed with error")
+		} else {
+			entry.Info("request completed")
+		}
+
+		return err
+	}
+
 	app := fiber.New(fiber.Config{
 		AppName:         config.GetString("app.name"),
 		StrictRouting:   true,
@@ -31,10 +70,9 @@ func NewFiber(config *viper.Viper, validate *FiberValidator, log *logrus.Logger)
 		ErrorHandler:    errorHandler,
 	})
 
-	// Register global middleware
-	app.Use(logger.New())
-	app.Use(recover.New())
 	app.Use(requestid.New())
+	app.Use(accessLogger)
+	app.Use(recover.New())
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: []string{"*"},
 		AllowMethods: []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"},
