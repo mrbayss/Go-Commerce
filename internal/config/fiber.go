@@ -2,7 +2,6 @@ package config
 
 import (
 	"errors"
-	"log"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/gofiber/fiber/v3"
@@ -13,12 +12,17 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/mrbayss/Go-Commerce/internal/domain"
 	"github.com/mrbayss/Go-Commerce/internal/model/response"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 	"gorm.io/gorm"
 )
 
 // NewFiber creates and configures a new Fiber application instance.
-func NewFiber(config *viper.Viper, validate *FiberValidator) *fiber.App {
+func NewFiber(config *viper.Viper, validate *FiberValidator, log *logrus.Logger) *fiber.App {
+	errorHandler := func(c fiber.Ctx, err error) error {
+		return handleError(c, err, log)
+	}
+
 	app := fiber.New(fiber.Config{
 		AppName:         config.GetString("app.name"),
 		StrictRouting:   true,
@@ -40,8 +44,8 @@ func NewFiber(config *viper.Viper, validate *FiberValidator) *fiber.App {
 	return app
 }
 
-// errorHandler is the global error handler for the Fiber application.
-func errorHandler(c fiber.Ctx, err error) error {
+// handleError is the global error handler for the Fiber application.
+func handleError(c fiber.Ctx, err error, log *logrus.Logger) error {
 	// Fiber's own errors (404, 405, etc.)
 	var fiberErr *fiber.Error
 	if errors.As(err, &fiberErr) {
@@ -92,7 +96,7 @@ func errorHandler(c fiber.Ctx, err error) error {
 		return response.ErrorResponse(c, appErr.Code, appErr.Message)
 	}
 
-	// Everything else — log the real error, return generic message
-	log.Printf("unhandled error: %v", err)
+	// Everything else — log the real error with logrus, return generic message
+	log.WithField("error", err.Error()).WithField("path", c.Path()).Error("unhandled error")
 	return response.ErrorResponse(c, fiber.StatusInternalServerError, "internal server error")
 }

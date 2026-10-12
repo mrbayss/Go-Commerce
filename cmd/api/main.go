@@ -10,7 +10,7 @@ func main() {
 	cfg := config.NewViper()
 	log := config.NewLogger(cfg)
 	validator := config.NewValidation()
-	app := config.NewFiber(cfg, validator)
+	app := config.NewFiber(cfg, validator, log)
 	db := config.NewDatabase(cfg, log)
 	redis := config.NewRedis(cfg)
 
