@@ -38,9 +38,12 @@ GoCommerce/
 │   │   └── logrus.go                ← NewLogger
 │   ├── domain/
 │   │   └── errors.go                ← AppError struct
-│   └── model/
-│       └── response/
-│           └── response.go          ← Standard API response format
+│   ├── entity/                      ← GORM database entities (User, Product, Order, etc.)
+│   ├── model/
+│   │   └── response/
+│   │       └── response.go          ← Standard API response format
+│   └── repository/
+│       └── base.go                  ← Generic GORM base repository (CRUD, pagination, opts)
 ├── config.yaml                      ← Active config (gitignored)
 ├── config.yaml.example              ← Config template
 ├── go.mod / go.sum
@@ -93,6 +96,17 @@ GoCommerce/
 ### 7. Tests
 - (none)
 
+### 8. Entity Layer
+- [x] Database entities in `internal/entity/` (User, Store, Product, Category, Cart, Order, Payment, Shipment, Review, Voucher, Campaign, Wallet, Notification, Chat)
+- [x] Auto-migration support in `internal/config/gorm.go`
+
+### 9. Repository Layer
+- [x] Generic `Repository[T]` interface (`Create`, `FindByID`, `FindAll`, `FindWithPagination`, `Updates`, `Delete`) in `internal/repository/base.go`
+- [x] Concrete `GormRepository[T]` implementation using GORM
+- [x] Functional query options (`WithFilter`, `WithOrder`, `WithPreload`)
+- [x] Pagination support returning items slice and total count
+- [x] Native GORM error propagation (`gorm.ErrRecordNotFound` on zero rows affected)
+
 ---
 
 ## Fix Log
@@ -120,12 +134,12 @@ GoCommerce/
 ## What's Next (TODO)
 
 ### Phase 1: Domain & Entity Layer
-- [ ] Create `internal/entity/` — GORM database models (User, Product, Order, etc.)
+- [x] Create `internal/entity/` — GORM database models (User, Product, Order, etc.)
 - [ ] Create `internal/domain/` — core business models + repository interfaces
 - [ ] Create `internal/model/` — request/response DTOs
 
 ### Phase 2: Repository Layer
-- [ ] Create `internal/repository/` — implements domain interfaces
+- [x] Create `internal/repository/` — generic base repository (`base.go`)
 - [ ] User repository (CRUD)
 - [ ] Product repository (CRUD)
 - [ ] Order repository (CRUD)
@@ -222,4 +236,4 @@ GoCommerce/
 
 ---
 
-*Last updated: 2026-10-12*
+*Last updated: 2026-10-23*
