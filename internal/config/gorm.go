@@ -4,11 +4,43 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/mrbayss/Go-Commerce/internal/entity"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
+
+// AutoMigrate migrates all entity schemas into the database.
+func AutoMigrate(db *gorm.DB) error {
+	return db.AutoMigrate(
+		&entity.User{},
+		&entity.Address{},
+		&entity.Store{},
+		&entity.Category{},
+		&entity.Product{},
+		&entity.ProductVariant{},
+		&entity.ProductImage{},
+		&entity.Cart{},
+		&entity.CartItem{},
+		&entity.Voucher{},
+		&entity.Order{},
+		&entity.StoreOrder{},
+		&entity.OrderItem{},
+		&entity.Payment{},
+		&entity.Shipment{},
+		&entity.Wallet{},
+		&entity.WalletTransaction{},
+		&entity.VoucherUsage{},
+		&entity.Campaign{},
+		&entity.FlashSaleItem{},
+		&entity.Review{},
+		&entity.Conversation{},
+		&entity.ConversationParticipant{},
+		&entity.Message{},
+		&entity.Notification{},
+	)
+}
 
 // NewDatabase creates a new GORM database connection and configures the connection pool.
 func NewDatabase(viper *viper.Viper, log *logrus.Logger) *gorm.DB {
@@ -61,6 +93,13 @@ func NewDatabase(viper *viper.Viper, log *logrus.Logger) *gorm.DB {
 		"conn_max_lifetime":  connMaxLifetime,
 		"conn_max_idle_time": connMaxIdleTime,
 	}).Info("Database connection pool configured")
+
+	// Auto migration check
+	if viper.GetBool("postgres.auto_migrate") {
+		if err := AutoMigrate(db); err != nil {
+			log.WithError(err).Fatal("Failed to auto-migrate database")
+		}
+	}
 
 	return db
 }
