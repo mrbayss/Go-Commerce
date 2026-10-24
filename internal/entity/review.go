@@ -16,17 +16,17 @@ const (
 // Only verified purchases (buyer who completed an order) should be marked as verified.
 type Review struct {
 	BaseModel
-	UserID     uuid.UUID    `json:"user_id" gorm:"type:uuid;not null;index"`
-	ProductID  uuid.UUID    `json:"product_id" gorm:"type:uuid;not null;index"`
-	OrderID    *uuid.UUID   `json:"order_id,omitempty" gorm:"type:uuid;index"`
-	Rating     int          `json:"rating" gorm:"not null"` // 1-5
-	Title      *string      `json:"title,omitempty" gorm:"type:varchar(255)"`
-	Comment    *string      `json:"comment,omitempty" gorm:"type:text"`
-	IsVerified bool         `json:"is_verified" gorm:"not null;default:false"` // Verified purchase
-	Status     ReviewStatus `json:"status" gorm:"type:varchar(20);not null;default:'pending';index"`
+	UserID     uuid.UUID    `gorm:"type:uuid;not null;index"`
+	ProductID  uuid.UUID    `gorm:"type:uuid;not null;index"`
+	OrderID    *uuid.UUID   `gorm:"type:uuid;index"`
+	Rating     int          `gorm:"not null"` // 1-5
+	Title      *string      `gorm:"type:varchar(255)"`
+	Comment    *string      `gorm:"type:text"`
+	IsVerified bool         `gorm:"not null;default:false"` // Verified purchase
+	Status     ReviewStatus `gorm:"type:varchar(20);not null;default:'pending';index"`
 
 	// Relations
-	User    User    `json:"user,omitempty" gorm:"foreignKey:UserID"`
-	Product Product `json:"-" gorm:"foreignKey:ProductID"`
-	Order   *Order  `json:"-" gorm:"foreignKey:OrderID"`
+	User    User    `gorm:"foreignKey:UserID"`
+	Product Product `gorm:"foreignKey:ProductID"`
+	Order   *Order  `gorm:"foreignKey:OrderID"`
 }

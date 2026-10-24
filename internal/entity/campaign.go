@@ -28,31 +28,31 @@ const (
 // A campaign groups multiple flash sale items under a shared time window.
 type Campaign struct {
 	BaseModel
-	Title       string         `json:"title" gorm:"type:varchar(255);not null"`
-	Description *string        `json:"description,omitempty" gorm:"type:text"`
-	BannerURL   *string        `json:"banner_url,omitempty" gorm:"type:varchar(500)"`
-	StartTime   time.Time      `json:"start_time" gorm:"not null;index"`
-	EndTime     time.Time      `json:"end_time" gorm:"not null;index"`
-	Status      CampaignStatus `json:"status" gorm:"type:varchar(20);not null;default:'draft';index"`
+	Title       string         `gorm:"type:varchar(255);not null"`
+	Description *string        `gorm:"type:text"`
+	BannerURL   *string        `gorm:"type:varchar(500)"`
+	StartTime   time.Time      `gorm:"not null;index"`
+	EndTime     time.Time      `gorm:"not null;index"`
+	Status      CampaignStatus `gorm:"type:varchar(20);not null;default:'draft';index"`
 
 	// Relations
-	FlashSaleItems []FlashSaleItem `json:"flash_sale_items,omitempty" gorm:"foreignKey:CampaignID"`
+	FlashSaleItems []FlashSaleItem `gorm:"foreignKey:CampaignID"`
 }
 
 // FlashSaleItem represents a specific product variant offered in a campaign
 // with a special flash price and limited stock.
 type FlashSaleItem struct {
 	BaseModel
-	CampaignID     uuid.UUID           `json:"campaign_id" gorm:"type:uuid;not null;index"`
-	VariantID      uuid.UUID           `json:"variant_id" gorm:"type:uuid;not null;index"`
-	OriginalPrice  int64               `json:"original_price" gorm:"not null"`
-	FlashPrice     int64               `json:"flash_price" gorm:"not null"`
-	TotalStock     int                 `json:"total_stock" gorm:"not null"`
-	AvailableStock int                 `json:"available_stock" gorm:"not null"`
-	MaxPerUser     int                 `json:"max_per_user" gorm:"not null;default:1"`
-	Status         FlashSaleItemStatus `json:"status" gorm:"type:varchar(20);not null;default:'active'"`
+	CampaignID     uuid.UUID           `gorm:"type:uuid;not null;index"`
+	VariantID      uuid.UUID           `gorm:"type:uuid;not null;index"`
+	OriginalPrice  int64               `gorm:"not null"`
+	FlashPrice     int64               `gorm:"not null"`
+	TotalStock     int                 `gorm:"not null"`
+	AvailableStock int                 `gorm:"not null"`
+	MaxPerUser     int                 `gorm:"not null;default:1"`
+	Status         FlashSaleItemStatus `gorm:"type:varchar(20);not null;default:'active'"`
 
 	// Relations
-	Campaign Campaign       `json:"-" gorm:"foreignKey:CampaignID"`
-	Variant  ProductVariant `json:"variant,omitempty" gorm:"foreignKey:VariantID"`
+	Campaign Campaign       `gorm:"foreignKey:CampaignID"`
+	Variant  ProductVariant `gorm:"foreignKey:VariantID"`
 }

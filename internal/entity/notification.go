@@ -28,15 +28,15 @@ const (
 // Supports multiple channels: in-app, email, SMS, push.
 type Notification struct {
 	BaseModel
-	UserID  uuid.UUID           `json:"user_id" gorm:"type:uuid;not null;index"`
-	Type    string              `json:"type" gorm:"type:varchar(50);not null;index"` // e.g., "order_paid", "order_shipped", "new_message"
-	Title   string              `json:"title" gorm:"type:varchar(255);not null"`
-	Body    string              `json:"body" gorm:"type:text;not null"`
-	Channel NotificationChannel `json:"channel" gorm:"type:varchar(20);not null;default:'in_app'"` // in_app, email, sms, push
-	Payload *string             `json:"payload,omitempty" gorm:"type:jsonb"`                       // Additional data (e.g., order_id, conversation_id)
-	Status  NotificationStatus  `json:"status" gorm:"type:varchar(20);not null;default:'pending';index"`
-	ReadAt  *time.Time          `json:"read_at,omitempty"`
+	UserID  uuid.UUID           `gorm:"type:uuid;not null;index"`
+	Type    string              `gorm:"type:varchar(50);not null;index"` // e.g., "order_paid", "order_shipped", "new_message"
+	Title   string              `gorm:"type:varchar(255);not null"`
+	Body    string              `gorm:"type:text;not null"`
+	Channel NotificationChannel `gorm:"type:varchar(20);not null;default:'in_app'"` // in_app, email, sms, push
+	Payload *string             `gorm:"type:jsonb"`                                 // Additional data (e.g., order_id, conversation_id)
+	Status  NotificationStatus  `gorm:"type:varchar(20);not null;default:'pending';index"`
+	ReadAt  *time.Time
 
 	// Relations
-	User User `json:"-" gorm:"foreignKey:UserID"`
+	User User `gorm:"foreignKey:UserID"`
 }
