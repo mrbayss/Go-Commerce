@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"errors"
-	"time"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/gofiber/fiber/v3"
@@ -26,10 +25,6 @@ func NewFiber(cfg *config.Config, log *logrus.Logger, validate *FiberValidator) 
 		CaseSensitive:   true,
 		StructValidator: validate,
 		ErrorHandler:    errorHandler(log),
-		BodyLimit:       10 * 1024 * 1024,
-		ReadTimeout:     30 * time.Second,
-		WriteTimeout:    30 * time.Second,
-		IdleTimeout:     60 * time.Second,
 	})
 
 	app.Use(requestid.New())
@@ -45,43 +40,8 @@ func NewFiber(cfg *config.Config, log *logrus.Logger, validate *FiberValidator) 
 		AllowMethods: []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"},
 		AllowHeaders: []string{"Origin", "Content-Type", "Accept", "Authorization"},
 	}))
-	app.Use(accessLogger(log))
 
 	return app
-}
-
-func accessLogger(log *logrus.Logger) fiber.Handler {
-	return func(c fiber.Ctx) error {
-		err := c.Next()
-
-		status := c.Response().StatusCode()
-		var fiberErr *fiber.Error
-		if errors.As(err, &fiberErr) {
-			status = fiberErr.Code
-		}
-		var appErr *apperrors.AppError
-		if errors.As(err, &appErr) {
-			status = appErr.Code
-		}
-
-		fields := logrus.Fields{
-			"method": c.Method(),
-			"path":   c.Path(),
-			"status": status,
-		}
-		if rid, ok := c.Locals("request_id").(string); ok {
-			fields["rid"] = rid
-		}
-
-		entry := log.WithFields(fields)
-		if err != nil {
-			entry.WithError(err).Info("request completed with error")
-		} else {
-			entry.Info("request completed")
-		}
-
-		return err
-	}
 }
 
 func errorHandler(log *logrus.Logger) fiber.ErrorHandler {
