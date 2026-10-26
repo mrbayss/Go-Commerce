@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v3"
-	"github.com/mrbayss/Go-Commerce/internal/app"
+	infraApp "github.com/mrbayss/Go-Commerce/internal/app"
 	"github.com/mrbayss/Go-Commerce/internal/config"
 	"github.com/mrbayss/Go-Commerce/internal/controller"
 	infraDb "github.com/mrbayss/Go-Commerce/internal/infra/db"
@@ -26,8 +26,8 @@ func main() {
 	}
 
 	log := config.NewLogger(cfg)
-	validator := app.NewValidation()
-	db := infraDb.NewDatabase(cfg, log)
+	validator := infraApp.NewValidation()
+	database := infraDb.NewDatabase(cfg, log)
 	redisClient := infraRedis.NewRedis(cfg)
 	mailer := infraMail.NewClient(&infraMail.SMTPConfig{
 		Host:        cfg.SMTP.Host,
@@ -40,8 +40,10 @@ func main() {
 		Timeout:     cfg.SMTP.Timeout,
 	})
 
-	// Domain wiring
-	authRepo := repository.NewAuthRepository(db)
+	// repository
+	authRepo := repository.NewAuthRepository(database)
+
+	// service
 	authCfg := service.AuthConfig{
 		OTPTtl:            cfg.Auth.OTPTtl,
 		MaxSignupPerEmail: cfg.Auth.SignupRateLimit.Max,
@@ -49,16 +51,18 @@ func main() {
 		ResendCooldown:    cfg.Auth.ResendCooldown,
 	}
 	authService := service.NewAuthService(authRepo, log, redisClient, validator.Validator, mailer, authCfg)
+
+	// controller
 	authController := controller.NewAuthController(authService)
 
 	// HTTP server
-	appInstance := app.NewFiber(cfg, log, validator)
+	appInstance := infraApp.NewFiber(cfg, log, validator)
 
 	apiV1 := appInstance.Group("/api/v1")
 	router.SetupAuthRoutes(apiV1, authController)
 
 	appInstance.Get("/health", func(c fiber.Ctx) error {
-		return app.HealthCheck(c, db, redisClient)
+		return infraApp.HealthCheck(c, database, redisClient)
 	})
 
 	// Start server in a goroutine so we can wait for signals

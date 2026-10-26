@@ -20,13 +20,6 @@ import (
 
 // NewFiber creates and configures a new Fiber application instance.
 func NewFiber(cfg *config.Config, log *logrus.Logger, validate *FiberValidator) *fiber.App {
-	readTimeout := 30 * time.Second
-	writeTimeout := 30 * time.Second
-	idleTimeout := 60 * time.Second
-	_ = readTimeout
-	_ = writeTimeout
-	_ = idleTimeout
-
 	app := fiber.New(fiber.Config{
 		AppName:         cfg.App.Name,
 		StrictRouting:   true,
@@ -34,6 +27,9 @@ func NewFiber(cfg *config.Config, log *logrus.Logger, validate *FiberValidator) 
 		StructValidator: validate,
 		ErrorHandler:    errorHandler(log),
 		BodyLimit:       10 * 1024 * 1024,
+		ReadTimeout:     30 * time.Second,
+		WriteTimeout:    30 * time.Second,
+		IdleTimeout:     60 * time.Second,
 	})
 
 	app.Use(requestid.New())
