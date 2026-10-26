@@ -22,3 +22,20 @@ redis:
   address: "localhost:6379"
   pass: ""
   db: 0
+
+auth:
+  otp_ttl: "10m"
+  signup_rate_limit:
+    max: 3
+    window: "10m"
+  resend_cooldown: "60s"
+
+smtp:
+  host: "smtp.gmail.com"
+  port: 587
+  username: "your_email@gmail.com"
+  password: "your_16_digit_app_password"
+  from_address: "your_email@gmail.com"
+  from_name: "GoCommerce"
+  tls_mode: "STARTTLS"
+  timeout: "10s"

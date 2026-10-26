@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/viper"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 // AutoMigrate migrates all entity schemas into the database.
@@ -54,7 +55,19 @@ func NewDatabase(viper *viper.Viper, log *logrus.Logger) *gorm.DB {
 		viper.GetString("postgres.sslmode"),
 	)
 
-	db, err := gorm.Open(postgres.Open(dsn))
+	// Configure GORM logger based on environment
+	var gormLogger gormlogger.Interface
+	env := viper.GetString("app.environment")
+	if env == "development" {
+		gormLogger = gormlogger.Default.LogMode(gormlogger.Info)
+	} else {
+		gormLogger = gormlogger.Discard
+	}
+
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
+		TranslateError: true,
+		Logger:         gormLogger,
+	})
 	if err != nil {
 		panic(fmt.Errorf("failed to connect database: %v", err))
 	}
@@ -86,13 +99,6 @@ func NewDatabase(viper *viper.Viper, log *logrus.Logger) *gorm.DB {
 	sqlDB.SetMaxIdleConns(maxIdleConns)
 	sqlDB.SetConnMaxLifetime(connMaxLifetime)
 	sqlDB.SetConnMaxIdleTime(connMaxIdleTime)
-
-	log.WithFields(logrus.Fields{
-		"max_open_conns":     maxOpenConns,
-		"max_idle_conns":     maxIdleConns,
-		"conn_max_lifetime":  connMaxLifetime,
-		"conn_max_idle_time": connMaxIdleTime,
-	}).Info("Database connection pool configured")
 
 	// Auto migration check
 	if viper.GetBool("postgres.auto_migrate") {

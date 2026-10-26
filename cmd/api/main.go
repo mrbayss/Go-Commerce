@@ -3,6 +3,8 @@ package main
 import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/mrbayss/Go-Commerce/internal/config"
+	"github.com/mrbayss/Go-Commerce/internal/pkg/mail"
+	"github.com/mrbayss/Go-Commerce/internal/pkg/mail/templates"
 )
 
 // main is the entry point of the application.
@@ -14,6 +16,11 @@ func main() {
 	db := config.NewDatabase(cfg, log)
 	redis := config.NewRedis(cfg)
 
+	mailCfg, err := mail.NewClient(cfg, templates.FS)
+	if err != nil {
+		log.Fatalf("failed to connect email: %v", err)
+	}
+
 	config.Bootstrap(&config.BootStrapConfig{
 		DB:       db,
 		App:      app,
@@ -21,6 +28,7 @@ func main() {
 		Validate: validator,
 		Config:   cfg,
 		Redis:    redis,
+		Mailer:   *mailCfg,
 	})
 
 	app.Get("/health", func(c fiber.Ctx) error {

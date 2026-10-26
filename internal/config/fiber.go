@@ -1,8 +1,8 @@
 package config
 
 import (
+	"context"
 	"errors"
-	"time"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/gofiber/fiber/v3"
@@ -10,7 +10,7 @@ import (
 	"github.com/gofiber/fiber/v3/middleware/recover"
 	"github.com/gofiber/fiber/v3/middleware/requestid"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/mrbayss/Go-Commerce/internal/domain"
+	apperrors "github.com/mrbayss/Go-Commerce/internal/errors"
 	"github.com/mrbayss/Go-Commerce/internal/model/response"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
@@ -19,59 +19,20 @@ import (
 
 // NewFiber creates and configures a new Fiber application instance.
 func NewFiber(config *viper.Viper, validate *FiberValidator, log *logrus.Logger) *fiber.App {
-	errorHandler := func(c fiber.Ctx, err error) error {
-		return handleError(c, err, log)
-	}
-
-	accessLogger := func(c fiber.Ctx) error {
-		start := time.Now()
-		err := c.Next()
-		latency := time.Since(start)
-
-		// Extract request ID from response header (set by requestid middleware)
-		reqID := c.GetRespHeader("X-Request-Id")
-
-		// status code response logger
-		status := c.Response().StatusCode()
-		if err != nil {
-			var fiberErr *fiber.Error
-			if errors.As(err, &fiberErr) {
-				status = fiberErr.Code
-			} else {
-				var appErr *domain.AppError
-				if errors.As(err, &appErr) {
-					status = appErr.Code
-				}
-			}
-		}
-
-		entry := log.WithFields(logrus.Fields{
-			"method":     c.Method(),
-			"path":       c.Path(),
-			"status":     status,
-			"latency_ms": float64(latency.Microseconds()) / 1000.0,
-			"rid":        reqID,
-		})
-
-		if err != nil {
-			entry.WithField("error", err.Error()).Warn("request completed with error")
-		} else {
-			entry.Info("request completed")
-		}
-
-		return err
-	}
-
 	app := fiber.New(fiber.Config{
 		AppName:         config.GetString("app.name"),
 		StrictRouting:   true,
 		CaseSensitive:   true,
 		StructValidator: validate,
-		ErrorHandler:    errorHandler,
+		ErrorHandler:    errorHandler(log),
 	})
 
 	app.Use(requestid.New())
-	app.Use(accessLogger)
+	app.Use(func(c fiber.Ctx) error {
+		ctx := context.WithValue(c.Context(), "request_id", c.GetRespHeader("X-Request-Id"))
+		c.SetContext(ctx)
+		return c.Next()
+	})
 	app.Use(recover.New())
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: []string{"*"},
@@ -82,59 +43,72 @@ func NewFiber(config *viper.Viper, validate *FiberValidator, log *logrus.Logger)
 	return app
 }
 
-// handleError is the global error handler for the Fiber application.
-func handleError(c fiber.Ctx, err error, log *logrus.Logger) error {
-	// Fiber's own errors (404, 405, etc.)
-	var fiberErr *fiber.Error
-	if errors.As(err, &fiberErr) {
-		return response.ErrorResponse(c, fiberErr.Code, fiberErr.Message)
-	}
-
-	// Bind errors (malformed JSON, wrong types)
-	var bindErr *fiber.BindError
-	if errors.As(err, &bindErr) {
-		return response.ErrorResponse(c, fiber.StatusBadRequest, "invalid request body")
-	}
-
-	// Validation errors - show details
-	var valErrs validator.ValidationErrors
-	if errors.As(err, &valErrs) {
-		details := make([]fiber.Map, 0, len(valErrs))
-		for _, fe := range valErrs {
-			details = append(details, fiber.Map{
-				"field":   fe.Field(),
-				"tag":     fe.Tag(),
-				"message": formatValidationError(fe),
-			})
+func errorHandler(log *logrus.Logger) fiber.ErrorHandler {
+	return func(c fiber.Ctx, err error) error {
+		// Fiber's own errors (404, 405, etc.)
+		var fiberErr *fiber.Error
+		if errors.As(err, &fiberErr) {
+			return response.ErrorResponse(c, fiberErr.Code, fiberErr.Message)
 		}
-		return response.ErrorResponseWithDetails(c, fiber.StatusUnprocessableEntity, "validation failed", details)
-	}
 
-	// Database errors
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return response.ErrorResponse(c, fiber.StatusNotFound, "resource not found")
-	}
-
-	if errors.Is(err, gorm.ErrDuplicatedKey) {
-		return response.ErrorResponse(c, fiber.StatusConflict, "duplicate entry")
-	}
-
-	// Foreign key violation (PostgreSQL SQLSTATE 23503)
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23503" {
-		return response.ErrorResponse(c, fiber.StatusConflict, "referenced resource does not exist")
-	}
-
-	// AppError - general business logic errors
-	var appErr *domain.AppError
-	if errors.As(err, &appErr) {
-		if appErr.Details != nil {
-			return response.ErrorResponseWithDetails(c, appErr.Code, appErr.Message, appErr.Details)
+		// Bind errors (malformed JSON, wrong types)
+		var bindErr *fiber.BindError
+		if errors.As(err, &bindErr) {
+			return response.ErrorResponse(c, fiber.StatusBadRequest, "invalid request body")
 		}
-		return response.ErrorResponse(c, appErr.Code, appErr.Message)
-	}
 
-	// Everything else — log the real error with logrus, return generic message
-	log.WithField("error", err.Error()).WithField("path", c.Path()).Error("unhandled error")
-	return response.ErrorResponse(c, fiber.StatusInternalServerError, "internal server error")
+		// Validation errors - show details
+		var valErrs validator.ValidationErrors
+		if errors.As(err, &valErrs) {
+			details := make([]fiber.Map, 0, len(valErrs))
+			for _, fe := range valErrs {
+				details = append(details, fiber.Map{
+					"field":   fe.Field(),
+					"tag":     fe.Tag(),
+					"message": formatValidationError(fe),
+				})
+			}
+			return response.ErrorResponseWithDetails(c, fiber.StatusUnprocessableEntity, "validation failed", details)
+		}
+
+		// Database errors
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return response.ErrorResponse(c, fiber.StatusNotFound, "resource not found")
+		}
+
+		if errors.Is(err, gorm.ErrDuplicatedKey) {
+			msg := "duplicate entry"
+			if errors.As(err, &pgconn.PgError{}) {
+				// Check specific unique index
+				var pgErr *pgconn.PgError
+				if errors.As(err, &pgErr) {
+					if pgErr.ConstraintName == "idx_users_email" {
+						msg = "email already registered"
+					} else if pgErr.ConstraintName == "idx_users_phone" {
+						msg = "phone number already registered"
+					}
+				}
+			}
+			return response.ErrorResponse(c, fiber.StatusConflict, msg)
+		}
+
+		// Foreign key violation (PostgreSQL SQLSTATE 23503)
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			return response.ErrorResponse(c, fiber.StatusConflict, "referenced resource does not exist")
+		}
+
+		// AppError - general business logic errors
+		var appErr *apperrors.AppError
+		if errors.As(err, &appErr) {
+			if appErr.Details != nil {
+				return response.ErrorResponseWithDetails(c, appErr.Code, appErr.Message, appErr.Details)
+			}
+			return response.ErrorResponse(c, appErr.Code, appErr.Message)
+		}
+
+		// Everything else — log the real error with logrus, return generic message
+		log.WithField("error", err.Error()).WithField("path", c.Path()).Error("unhandled error")
+		return response.ErrorResponse(c, fiber.StatusInternalServerError, "internal server error")
+	}
 }

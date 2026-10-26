@@ -5,6 +5,11 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v3"
+	"github.com/mrbayss/Go-Commerce/internal/controller"
+	"github.com/mrbayss/Go-Commerce/internal/pkg/mail"
+	"github.com/mrbayss/Go-Commerce/internal/repository"
+	"github.com/mrbayss/Go-Commerce/internal/router"
+	"github.com/mrbayss/Go-Commerce/internal/service"
 	"github.com/redis/go-redis/v9"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
@@ -19,11 +24,28 @@ type BootStrapConfig struct {
 	Validate *FiberValidator
 	Config   *viper.Viper
 	Redis    *redis.Client
+	Mailer   mail.Client
 }
 
 // Bootstrap initializes the application with the provided dependencies.
 func Bootstrap(config *BootStrapConfig) {
+	// Repositories
+	authRepo := repository.NewAuthRepository(config.DB)
 
+	// Services
+	authCfg := service.AuthConfig{
+		OTPTtl:            config.Config.GetDuration("auth.otp_ttl"),
+		MaxSignupPerEmail: config.Config.GetInt("auth.signup_rate_limit.max"),
+		SignupRateWindow:  config.Config.GetDuration("auth.signup_rate_limit.window"),
+		ResendCooldown:    config.Config.GetDuration("auth.resend_cooldown"),
+	}
+	authService := service.NewAuthService(authRepo, config.Log, config.Redis, config.Validate.validator, config.Mailer, authCfg)
+
+	// Controllers
+	authController := controller.NewAuthController(authService)
+
+	// Routes
+	router.SetupRoutes(config.App, authController)
 }
 
 // HealthCheck returns the health status of the application and its dependencies.

@@ -2,8 +2,11 @@ package config
 
 import (
 	"fmt"
+	"regexp"
+	"unicode"
 
 	"github.com/go-playground/validator/v10"
+	"github.com/go-playground/validator/v10/non-standard/validators"
 )
 
 // FiberValidator wraps validator.Validate to satisfy fiber.StructValidator.
@@ -18,19 +21,27 @@ func (v *FiberValidator) Validate(out any) error {
 
 // NewValidation creates a new FiberValidator instance.
 func NewValidation() *FiberValidator {
-	return &FiberValidator{validator: validator.New()}
+	validate := validator.New()
+
+	_ = validate.RegisterValidation("id_phone", validateIDPhone)
+	_ = validate.RegisterValidation("password", validatePassword)
+	_ = validate.RegisterValidation("notblank", validators.NotBlank)
+
+	return &FiberValidator{validator: validate}
 }
 
 // formatValidationError converts a validator.FieldError into a human-readable message.
 func formatValidationError(fe validator.FieldError) string {
-	field := fe.Field()   // Field name (e.g., "User.Email" for nested structs)
-	tag := fe.Tag()       // Failed validation tag (e.g., "required", "min")
-	param := fe.Param()   // Tag parameter (e.g., "3" for min=3)
+	field := fe.Field() // Field name (e.g., "User.Email" for nested structs)
+	tag := fe.Tag()     // Failed validation tag (e.g., "required", "min")
+	param := fe.Param() // Tag parameter (e.g., "3" for min=3)
 
 	// Format message based on validation tag
 	switch tag {
 	case "required":
 		return fmt.Sprintf("%s is required", field)
+	case "notblank":
+		return fmt.Sprintf("%s must not be empty or whitespace only", field)
 	case "email":
 		return fmt.Sprintf("%s must be a valid email", field)
 	case "min":
@@ -53,7 +64,52 @@ func formatValidationError(fe validator.FieldError) string {
 		return fmt.Sprintf("%s must be a valid URL", field)
 	case "uuid":
 		return fmt.Sprintf("%s must be a valid UUID", field)
+	case "id_phone":
+		return fmt.Sprintf("%s must be a valid Indonesian phone number starting with 62", field)
+	case "password":
+		return fmt.Sprintf("%s must contain uppercase, lowercase, numbers, symbols, and no spaces", field)
 	default:
 		return fe.Error()
 	}
+}
+
+// validation id phone number
+var idPhoneRegex = regexp.MustCompile(`^628[1-9][0-9]{7,11}$`)
+
+func validateIDPhone(fl validator.FieldLevel) bool {
+	return idPhoneRegex.MatchString(fl.Field().String())
+}
+
+// validatePassword:
+// 1. Uppercase and lowercase letters
+// 2. Numbers
+// 3. Symbols
+// 4. No whitespace
+func validatePassword(fl validator.FieldLevel) bool {
+	pass := fl.Field().String()
+
+	var (
+		hasUpper  bool
+		hasLower  bool
+		hasNumber bool
+		hasSymbol bool
+	)
+
+	for _, r := range pass {
+		if unicode.IsSpace(r) {
+			return false
+		}
+		switch {
+		case unicode.IsUpper(r):
+			hasUpper = true
+		case unicode.IsLower(r):
+			hasLower = true
+		case unicode.IsDigit(r):
+			hasNumber = true
+		case unicode.IsPunct(r) || unicode.IsSymbol(r):
+			hasSymbol = true
+		}
+	}
+
+	return hasUpper && hasLower && hasNumber && hasSymbol
 }
