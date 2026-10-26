@@ -1,7 +1,7 @@
 # GoCommerce — Progress Log
 
 > Backend e-commerce API boilerplate dengan Go + Fiber v3 + GORM + PostgreSQL + Redis.
-> Arsitektur: Clean Architecture (handler → service → repository → entity).
+> Arsitektur: Light Clean Architecture (controller → service → repository → entity) with `infra` isolated.
 
 ---
 
@@ -26,26 +26,38 @@
 GoCommerce/
 ├── cmd/
 │   └── api/
-│       └── main.go                  ← Entry point (thin, only wiring)
+│       └── main.go                  ← entry point (typed wiring + graceful shutdown)
 ├── internal/
+│   ├── app/                         ← HTTP adapter layer
+│   │   ├── server.go                ← NewFiber + middleware + access logger + error handler
+│   │   ├── validator.go             ← FiberValidator + custom validators
+│   │   └── health.go                ← HealthCheck (DB + Redis ping)
 │   ├── config/
-│   │   ├── app.go                   ← BootStrapConfig + HealthCheck
-│   │   ├── fiber.go                 ← NewFiber + errorHandler
-│   │   ├── gorm.go                  ← NewDatabase + connection pool
-│   │   ├── redis.go                 ← NewRedis + ping check
-│   │   ├── viper.go                 ← NewViper (config loader)
-│   │   ├── validation.go            ← FiberValidator adapter + formatValidationError
-│   │   └── logrus.go                ← NewLogger
+│   │   ├── config.go                ← typed Config struct + Load()
+│   │   └── logger.go                ← NewLogger
 │   ├── domain/
-│   │   └── errors.go                ← AppError struct
-│   ├── entity/                      ← GORM database entities (User, Product, Order, etc.)
+│   │   └── errors.go                ← AppError + sentinel errors
+│   ├── entity/                      ← GORM database entities
+│   ├── infra/
+│   │   ├── db/postgres.go           ← GORM + AutoMigrate + connection pool
+│   │   ├── redis/redis.go           ← Redis client
+│   │   └── mail/mailer.go           ← SMTP client + embedded templates (collapsed)
 │   ├── model/
-│   │   └── response/
-│   │       └── response.go          ← Standard API response format
-│   └── repository/
-│       └── base.go                  ← Generic GORM base repository (CRUD, pagination, opts)
-├── config.yaml                      ← Active config (gitignored)
-├── config.yaml.example              ← Config template
+│   │   ├── auth_model.go            ← request/response DTOs
+│   │   └── response/response.go     ← standard API response helpers
+│   ├── repository/
+│   │   ├── base.go                  ← generic GORM base repository
+│   │   └── auth_repository.go
+│   ├── router/
+│   │   ├── main_router.go
+│   │   └── auth_router.go
+│   ├── controller/
+│   │   └── auth_controller.go
+│   └── service/
+│       ├── auth_service.go
+│       └── auth_service_test.go
+├── config.yaml                      ← active config (gitignored)
+├── config.yaml.example
 ├── go.mod / go.sum
 └── .gitignore
 ```
@@ -54,139 +66,57 @@ GoCommerce/
 
 ## What's Done
 
-### 1. Configuration Layer
-- [x] Viper config loader (`config.yaml` based)
-- [x] Fiber app with CORS, logrus access logger, recover, requestid middleware
-- [x] Error handler + access log keduanya memakai logrus (structured JSON)
-- [x] GORM PostgreSQL connection with configurable pool settings
-- [x] Redis client with ping verification
-- [x] Logrus logger with configurable level
-- [x] FiberValidator adapter wrapping go-playground/validator
-- [x] Custom validation error messages (required, email, min, max, gte, lte, eq, ne, oneof, numeric, url, uuid)
-- [x] `config.yaml.example` template
-- [x] `.gitignore` (secrets, IDE, logs)
+### Architecture (Light Clean, Option B)
+- [x] Typed `Config` struct with `Load()` — no raw `viper.GetString` calls
+- [x] `infra/` isolated: `db`, `redis`, `mail` (mail collapsed from 7 files → 1)
+- [x] `app/` layer: server, validator, health
+- [x] `domain/errors.go` — single error package (consolidated from `internal/errors`)
+- [x] Graceful shutdown in `main.go` (`ShutdownWithContext`, 10s timeout)
+- [x] `accessLogger` middleware added in `app/server.go`
+- [x] `Fiber` timeouts: `BodyLimit` set; `Read/Write/Idle` timeouts documented
 
-### 2. Error Handling
-- [x] `AppError` struct in `internal/domain/errors.go`
-- [x] Global error handler in `internal/config/fiber.go`
-- [x] Handles: Fiber errors, Bind errors, Validation errors, GORM errors (ErrRecordNotFound, ErrDuplicatedKey), PostgreSQL FK violation (23503), AppError
-- [x] Unhandled errors logged with logrus (structured JSON), returns generic 500
-
-### 3. Response Format
-- [x] Standard `Response` struct (success, message, data)
-- [x] `PaginationResponse` struct (with pagination metadata)
-- [x] Helper functions: `SuccessResponse`, `CreatedResponse`, `PaginatedResponse`, `ErrorResponse`, `ErrorResponseWithDetails`
-
-### 4. Health Check
+### Features (from before)
+- [x] Viper config loader (now via typed `Config`)
+- [x] Fiber app with CORS, access logger (logrus JSON), recover, requestid
+- [x] Error handler — Fiber/Bind/Validation/GORM/AppError
+- [x] GORM PostgreSQL + Redis + SMTP mail
+- [x] Logrus JSON logger
+- [x] Custom validation (id_phone, password, notblank)
+- [x] `AppError` + sentinel errors
+- [x] Standard `Response` / `PaginationResponse` helpers
 - [x] `GET /health` endpoint
-- [x] Pings database and Redis with 2s timeout
-- [x] Returns `{"status": "ok|degraded", "components": {"database": "ok|error", "redis": "ok|error"}}`
-
-### 5. Middleware
-- [x] Access log via logrus (custom middleware, structured JSON) — fields: method, path, status, latency_ms, rid
-- [x] Recover (panic recovery)
-- [x] RequestID — didaftarkan **sebelum** access logger
-- [x] CORS (allow all origins, standard methods + Authorization header)
-
-### 6. Entry Point
-- [x] `cmd/api/main.go` — thin main, only wiring
-- [x] `config.Bootstrap()` function for DI container
-- [x] Server listens on configurable port from `config.yaml`
-
-### 7. Tests
-- (none)
-
-### 8. Entity Layer
-- [x] Database entities in `internal/entity/` (User, Store, Product, Category, Cart, Order, Payment, Shipment, Review, Voucher, Campaign, Wallet, Notification, Chat)
-- [x] Auto-migration support in `internal/config/gorm.go`
-
-### 9. Repository Layer
-- [x] Generic `Repository[T]` interface (`Create`, `FindByID`, `FindAll`, `FindWithPagination`, `Updates`, `Delete`) in `internal/repository/base.go`
-- [x] Concrete `GormRepository[T]` implementation using GORM
-- [x] Functional query options (`WithFilter`, `WithOrder`, `WithPreload`)
-- [x] Pagination support returning items slice and total count
-- [x] Native GORM error propagation (`gorm.ErrRecordNotFound` on zero rows affected)
-
----
-
-## Fix Log
-
-### 2026-10-12 — Migrasi access log dari Fiber built-in logger ke logrus
-
-**Gejala:** Fiber built-in logger (plain text) dan Logrus (JSON) tercampur di stdout — format tidak konsisten untuk log aggregation.
-
-**Perbaikan** (`internal/config/fiber.go`):
-- Fiber built-in `logger.New()` middleware dihapus.
-- Diganti custom `accessLogger` middleware yang menulis JSON via logrus.
-- Fields: `method`, `path`, `status`, `latency_ms`, `rid`.
-- Request ID dibaca dari response header `X-Request-Id` (diset oleh `requestid.New()`).
-- Status code: untuk `*fiber.Error` pakai `.Code`, untuk `*domain.AppError` pakai `.Code`, sisanya fallback ke `c.Response().StatusCode()`.
-
-**Output nyata:**
-
-```json
-{"latency_ms":1.237,"level":"info","method":"GET","msg":"request completed","path":"/health","rid":"qVwqJqJyaS3KHyVrYu0d5VoVKC3of0jCr_0QfYwmssw","status":200,"time":"2026-10-12T10:59:18.514+07:00"}
-{"error":"Not Found","latency_ms":0.004,"level":"warning","method":"GET","msg":"request completed with error","path":"/notfound","rid":"jJbb2vcLMApTYDWiAfIRFANcbF42y9SVot5bueMTbxo","status":404,"time":"2026-10-12T10:59:18.523+07:00"}
-```
+- [x] 15 GORM entities with auto-migration
+- [x] Generic `Repository[T]` + `GormRepository` implementation
+- [x] Auth service: signup flow with OTP (bcrypt + Redis + SMTP)
 
 ---
 
 ## What's Next (TODO)
 
-### Phase 1: Domain & Entity Layer
-- [x] Create `internal/entity/` — GORM database models (User, Product, Order, etc.)
-- [ ] Create `internal/domain/` — core business models + repository interfaces
-- [ ] Create `internal/model/` — request/response DTOs
-
-### Phase 2: Repository Layer
-- [x] Create `internal/repository/` — generic base repository (`base.go`)
-- [ ] User repository (CRUD)
-- [ ] Product repository (CRUD)
-- [ ] Order repository (CRUD)
-
-### Phase 3: Service Layer
-- [ ] Create `internal/service/` — business logic
-- [ ] User service (register, login, profile)
+### Domain Services
 - [ ] Product service (CRUD, search, filter)
 - [ ] Order service (create, cancel, status update)
+- [ ] User repository / Product repository / Order repository
 
-### Phase 4: Handler Layer
-- [ ] Create `internal/handler/` — HTTP handlers
-- [ ] User handler
-- [ ] Product handler
-- [ ] Order handler
+### Auth
+- [ ] Login endpoint + JWT middleware
+- [ ] Refresh token flow
+- [ ] RBAC (role-based access control)
 
-### Phase 5: Routes & DI
-- [ ] Create `internal/routes/` — route definitions + DI wiring
-- [ ] `routes.RegisterRoutes(app, db, validate)` composition root
-- [ ] Update `main.go` to use routes package
-
-### Phase 6: Auth & Security
-- [ ] JWT authentication middleware
-- [ ] Password hashing (bcrypt)
-- [ ] Auth handler (login, register, refresh)
-- [ ] Role-based access control (RBAC)
-
-### Phase 7: Infrastructure & DevOps
+### DevOps
 - [ ] `docker-compose.yml` (PostgreSQL + Redis)
-- [ ] `.env.example` file
-- [ ] Database migrations (`migrations/`)
-- [ ] Graceful shutdown (signal handling)
-- [ ] Struct-based config (replace Viper with typed config struct)
-- [ ] Env var override support (12-factor app)
+- [ ] Database migrations (replace AutoMigrate for prod)
+- [ ] `env` override for config (partially done via `AutomaticEnv`)
 
-### Phase 8: Testing
-- [ ] Unit tests (mock interfaces)
-- [ ] Integration tests (HTTP request → response)
+### Testing
+- [ ] Integration tests (HTTP request → response, testcontainers)
 - [ ] Handler tests (httptest + mocked services)
 
-### Phase 9: Additional Features
+### Features
 - [ ] Rate limiting middleware
-- [ ] Request validation middleware
-- [ ] API versioning (`/api/v1/...`)
-- [ ] Swagger/OpenAPI documentation
-- [ ] Structured logging with request ID correlation
-- [ ] Caching layer (Redis integration for hot data)
+- [ ] API versioning enforced (`/api/v1` present)
+- [ ] Swagger/OpenAPI
+- [ ] Redis caching layer
 
 ---
 
@@ -194,46 +124,24 @@ GoCommerce/
 
 | Decision | Rationale |
 |----------|-----------|
-| Clean Architecture | Separation of concerns, testability, maintainability |
-| Constructor injection | No DI container needed, explicit dependencies |
-| Domain interfaces in `internal/domain/` | Enables mocking, decouples layers |
-| `internal/entity/` vs `internal/model/` | DB models vs DTOs separation |
-| `AppError` in domain layer | Framework-agnostic business errors |
-| `FiberValidator` adapter | go-playground/validator doesn't satisfy `fiber.StructValidator` |
-| Config-driven pool/timeout | Production needs different values than dev |
-| `config.yaml` + Viper | Simple, file-based config with env override potential |
+| Light Clean (Option B) | Layer jelas, testable, tanpa over-abstraction |
+| `infra/` vs `pkg/` | infra = external I/O (DB, Redis, SMTP); keeps `pkg/` for pure utilities (otp) |
+| Typed `Config` | Type-safe, catches typos; Viper raw access removed from call sites |
+| Mail collapsed to 1 file | 7 files → 1; options pattern removed (YAGNI) |
+| `domain/errors.go` | Single source of truth for `AppError` + sentinels |
+| Graceful shutdown | `ShutdownWithContext(10s)` prevents mid-request crash |
+| No DI container | Manual constructor injection; add `wire`/`fx` when >10 deps |
 
 ---
 
 ## Known Issues / Technical Debt
 
-1. **`Bootstrap()` is empty** — currently does nothing, needs AutoMigrate + route registration
-2. **No graceful shutdown** — `app.Listen()` dies mid-request on SIGTERM
-3. **No env var override** — Viper doesn't have `AutomaticEnv()` configured
-4. **No struct-based config** — Viper is used directly, not type-safe
-5. **CORS allows all origins** — `[]string{"*"}` is fine for dev, needs restriction for prod
-6. **No request timeouts** — Fiber `ReadTimeout`, `WriteTimeout`, `IdleTimeout` not set
-7. **No body limit** — Fiber `BodyLimit` not configured
-8. **No API versioning** — routes not prefixed with `/api/v1/`
-9. **Test coverage masih minimal** — belum ada unit/integration test untuk layer manapun
-10. **`ServerHeader` not set** — defaults to empty, which is actually fine (omits `Server: fasthttp`)
-11. ~~**Logger order in `NewFiber`**~~ — **FIXED** 2026-10-12. `requestid.New()` sekarang didaftarkan sebelum access logger. Lihat Fix Log di atas.
-12. ~~**Log syntax: `${requestid}`, NOT `${locals:requestid}`**~~ — **FIXED** 2026-10-12. Custom access log via logrus menggantikan Fiber built-in logger.
-13. ~~**`log.Printf` untuk unhandled error**~~ — **FIXED** 2026-10-12. Error handler memakai logrus dengan fields (`error`, `path`). `NewFiber` menerima `*logrus.Logger` dan error handler di-bind via closure.
-14. ~~**Fiber built-in logger (plain text) vs Logrus (JSON)**~~ — **FIXED** 2026-10-12. Fiber built-in logger dihapus. Access log sekarang memakai custom middleware yang menulis JSON via logrus — semua log konsisten dalam satu format.
-15. ~~**Access log status code salah untuk error**~~ — **FIXED** 2026-10-12. `c.Response().StatusCode()` dibaca sebelum error handler set status, jadi 404 tercatat 200. Fix: untuk `*fiber.Error` pakai `.Code`, untuk `*domain.AppError` pakai `.Code`, sisanya fallback ke response status.
+1. **CORS allows all origins** — `[]string{"*"}` is fine for dev, needs restriction for prod
+2. **No testcontainers** — integration tests still TODO
+3. **SMTP config `from_address` vs `username`** — `mailer.go` prefers `FromAddress` if set, falls back to `Username`
+4. **`pkg/otp` still in `internal/pkg`** — should move to `internal/domain/` or `internal/util/` when refactored further
+5. **AutoMigrate** — replace with proper migrations before prod
 
 ---
 
-## References
-
-- [Fiber v3 Docs](https://docs.gofiber.io/)
-- [GORM Docs](https://gorm.io/docs/)
-- [Viper Docs](https://github.com/spf13/viper)
-- [Logrus Docs](https://github.com/sirupsen/logrus)
-- [go-playground/validator](https://github.com/go-playground/validator)
-- [go-redis](https://github.com/redis/go-redis)
-
----
-
-*Last updated: 2026-10-23*
+*Last updated: 2026-10-26 — Light Clean Architecture (Option B) refactor*
