@@ -1,42 +1,80 @@
 package main
 
 import (
+	"context"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
 	"github.com/gofiber/fiber/v3"
+	"github.com/mrbayss/Go-Commerce/internal/app"
 	"github.com/mrbayss/Go-Commerce/internal/config"
-	"github.com/mrbayss/Go-Commerce/internal/pkg/mail"
-	"github.com/mrbayss/Go-Commerce/internal/pkg/mail/templates"
+	"github.com/mrbayss/Go-Commerce/internal/controller"
+	infraDb "github.com/mrbayss/Go-Commerce/internal/infra/db"
+	infraMail "github.com/mrbayss/Go-Commerce/internal/infra/mail"
+	infraRedis "github.com/mrbayss/Go-Commerce/internal/infra/redis"
+	"github.com/mrbayss/Go-Commerce/internal/repository"
+	"github.com/mrbayss/Go-Commerce/internal/router"
+	"github.com/mrbayss/Go-Commerce/internal/service"
 )
 
-// main is the entry point of the application.
 func main() {
-	cfg := config.NewViper()
-	log := config.NewLogger(cfg)
-	validator := config.NewValidation()
-	app := config.NewFiber(cfg, validator, log)
-	db := config.NewDatabase(cfg, log)
-	redis := config.NewRedis(cfg)
-
-	mailCfg, err := mail.NewClient(cfg, templates.FS)
+	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("failed to connect email: %v", err)
+		panic(err)
 	}
 
-	config.Bootstrap(&config.BootStrapConfig{
-		DB:       db,
-		App:      app,
-		Log:      log,
-		Validate: validator,
-		Config:   cfg,
-		Redis:    redis,
-		Mailer:   *mailCfg,
+	log := config.NewLogger(cfg)
+	validator := app.NewValidation()
+	db := infraDb.NewDatabase(cfg, log)
+	redisClient := infraRedis.NewRedis(cfg)
+	mailer := infraMail.NewClient(&infraMail.SMTPConfig{
+		Host:        cfg.SMTP.Host,
+		Port:        cfg.SMTP.Port,
+		Username:    cfg.SMTP.Username,
+		Password:    cfg.SMTP.Password,
+		FromAddress: cfg.SMTP.FromAddress,
+		FromName:    cfg.SMTP.FromName,
+		TLSMode:     cfg.SMTP.TLSMode,
+		Timeout:     cfg.SMTP.Timeout,
 	})
 
-	app.Get("/health", func(c fiber.Ctx) error {
-		return config.HealthCheck(c, db, redis)
-	})
-
-	// Start Fiber HTTP server
-	if err := app.Listen(":" + cfg.GetString("app.port")); err != nil {
-		log.Fatalf("Server failed: %v", err)
+	// Domain wiring
+	authRepo := repository.NewAuthRepository(db)
+	authCfg := service.AuthConfig{
+		OTPTtl:            cfg.Auth.OTPTtl,
+		MaxSignupPerEmail: cfg.Auth.SignupRateLimit.Max,
+		SignupRateWindow:  cfg.Auth.SignupRateLimit.Window,
+		ResendCooldown:    cfg.Auth.ResendCooldown,
 	}
+	authService := service.NewAuthService(authRepo, log, redisClient, validator.Validator, mailer, authCfg)
+	authController := controller.NewAuthController(authService)
+
+	// HTTP server
+	appInstance := app.NewFiber(cfg, log, validator)
+
+	apiV1 := appInstance.Group("/api/v1")
+	router.SetupAuthRoutes(apiV1, authController)
+
+	appInstance.Get("/health", func(c fiber.Ctx) error {
+		return app.HealthCheck(c, db, redisClient)
+	})
+
+	// Start server in a goroutine so we can wait for signals
+	go func() {
+		if err := appInstance.Listen(":" + cfg.App.Port); err != nil {
+			log.Fatalf("server failed: %v", err)
+		}
+	}()
+
+	// Graceful shutdown
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+	<-quit
+
+	log.Info("shutting down server...")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = appInstance.ShutdownWithContext(ctx)
 }

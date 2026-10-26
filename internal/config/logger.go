@@ -4,13 +4,12 @@ import (
 	"os"
 
 	"github.com/sirupsen/logrus"
-	"github.com/spf13/viper"
 )
 
 // NewLogger creates a new logrus.Logger instance with JSON formatting.
-func NewLogger(v *viper.Viper) *logrus.Logger {
+func NewLogger(cfg *Config) *logrus.Logger {
 	log := logrus.New()
-	level, err := logrus.ParseLevel(v.GetString("log.level"))
+	level, err := logrus.ParseLevel(cfg.Log.Level)
 	if err != nil {
 		level = logrus.InfoLevel
 	}

@@ -4,9 +4,9 @@ import "github.com/gofiber/fiber/v3"
 
 // Response is the standard response format for all API responses.
 type Response struct {
-	Success bool        `json:"success"`         // Indicates if the request was successful
-	Message string      `json:"message"`         // Human-readable message
-	Data    interface{} `json:"data,omitempty"`  // Response data (omitted if empty)
+	Success bool        `json:"success"`        // Indicates if the request was successful
+	Message string      `json:"message"`        // Human-readable message
+	Data    interface{} `json:"data,omitempty"` // Response data (omitted if empty)
 }
 
 // PaginationResponse is the response format for paginated data.
@@ -19,9 +19,9 @@ type PaginationResponse struct {
 
 // Pagination contains metadata for paginated responses.
 type Pagination struct {
-	Page  int `json:"page"`   // Current page number
-	Limit int `json:"limit"`  // Number of items per page
-	Total int `json:"total"`  // Total number of items
+	Page  int `json:"page"`  // Current page number
+	Limit int `json:"limit"` // Number of items per page
+	Total int `json:"total"` // Total number of items
 }
 
 // SuccessResponse creates a successful response with status 200.

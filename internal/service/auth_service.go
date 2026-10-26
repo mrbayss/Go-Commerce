@@ -8,10 +8,9 @@ import (
 	"time"
 
 	"github.com/go-playground/validator/v10"
-	apperrors "github.com/mrbayss/Go-Commerce/internal/errors"
+	apperrors "github.com/mrbayss/Go-Commerce/internal/domain"
+	"github.com/mrbayss/Go-Commerce/internal/infra/mail"
 	"github.com/mrbayss/Go-Commerce/internal/model"
-	"github.com/mrbayss/Go-Commerce/internal/pkg/mail"
-	"github.com/mrbayss/Go-Commerce/internal/pkg/mail/templates"
 	"github.com/mrbayss/Go-Commerce/internal/pkg/otp"
 	"github.com/mrbayss/Go-Commerce/internal/repository"
 	"github.com/redis/go-redis/v9"
@@ -31,7 +30,7 @@ type AuthService struct {
 	Log        *logrus.Logger
 	Redis      *redis.Client
 	Validation *validator.Validate
-	Mail       mail.Client
+	Mail       *mail.Client
 	Config     AuthConfig
 }
 
@@ -43,7 +42,7 @@ type signupPending struct {
 	Phone        *string `json:"phone,omitempty"`
 }
 
-func NewAuthService(authRepo repository.AuthRepository, log *logrus.Logger, redis *redis.Client, validation *validator.Validate, mail mail.Client, cfg AuthConfig) *AuthService {
+func NewAuthService(authRepo repository.AuthRepository, log *logrus.Logger, redis *redis.Client, validation *validator.Validate, mail *mail.Client, cfg AuthConfig) *AuthService {
 	if cfg.OTPTtl <= 0 {
 		cfg.OTPTtl = 10 * time.Minute
 	}
@@ -157,7 +156,7 @@ func (as *AuthService) SignUp(ctx context.Context, request model.SignUpReq) (*mo
 		return nil, apperrors.Wrap(err, http.StatusBadGateway, "failed to store otp")
 	}
 
-	if err := as.Mail.SendTemplate(ctx, []string{email}, "GoCommerce OTP Verify", "otp_signup.html", templates.OtpData{
+	if err := as.Mail.SendTemplate(ctx, []string{email}, "GoCommerce OTP Verify", "otp_signup.html", mail.OtpData{
 		Code:    codeOTP,
 		Expired: int(as.Config.OTPTtl.Minutes()),
 	}); err != nil {
@@ -174,5 +173,3 @@ func (as *AuthService) SignUp(ctx context.Context, request model.SignUpReq) (*mo
 
 	return &res, nil
 }
-
-

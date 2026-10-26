@@ -20,6 +20,6 @@ type authRepository struct {
 func NewAuthRepository(db *gorm.DB) AuthRepository {
 	return &authRepository{
 		RepositoryImpl: RepositoryImpl[entity.User]{db: db},
-		db:            db,
+		db:             db,
 	}
 }

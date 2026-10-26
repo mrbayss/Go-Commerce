@@ -1,4 +1,4 @@
-package config
+package app
 
 import (
 	"fmt"
@@ -11,12 +11,12 @@ import (
 
 // FiberValidator wraps validator.Validate to satisfy fiber.StructValidator.
 type FiberValidator struct {
-	validator *validator.Validate
+	Validator *validator.Validate
 }
 
 // Validate implements fiber.StructValidator.
 func (v *FiberValidator) Validate(out any) error {
-	return v.validator.Struct(out)
+	return v.Validator.Struct(out)
 }
 
 // NewValidation creates a new FiberValidator instance.
@@ -27,16 +27,15 @@ func NewValidation() *FiberValidator {
 	_ = validate.RegisterValidation("password", validatePassword)
 	_ = validate.RegisterValidation("notblank", validators.NotBlank)
 
-	return &FiberValidator{validator: validate}
+	return &FiberValidator{Validator: validate}
 }
 
 // formatValidationError converts a validator.FieldError into a human-readable message.
-func formatValidationError(fe validator.FieldError) string {
-	field := fe.Field() // Field name (e.g., "User.Email" for nested structs)
-	tag := fe.Tag()     // Failed validation tag (e.g., "required", "min")
-	param := fe.Param() // Tag parameter (e.g., "3" for min=3)
+func FormatValidationError(fe validator.FieldError) string {
+	field := fe.Field()
+	tag := fe.Tag()
+	param := fe.Param()
 
-	// Format message based on validation tag
 	switch tag {
 	case "required":
 		return fmt.Sprintf("%s is required", field)

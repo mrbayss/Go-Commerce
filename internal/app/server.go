@@ -1,8 +1,9 @@
-package config
+package app
 
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/gofiber/fiber/v3"
@@ -10,27 +11,36 @@ import (
 	"github.com/gofiber/fiber/v3/middleware/recover"
 	"github.com/gofiber/fiber/v3/middleware/requestid"
 	"github.com/jackc/pgx/v5/pgconn"
-	apperrors "github.com/mrbayss/Go-Commerce/internal/errors"
+	"github.com/mrbayss/Go-Commerce/internal/config"
+	apperrors "github.com/mrbayss/Go-Commerce/internal/domain"
 	"github.com/mrbayss/Go-Commerce/internal/model/response"
 	"github.com/sirupsen/logrus"
-	"github.com/spf13/viper"
 	"gorm.io/gorm"
 )
 
 // NewFiber creates and configures a new Fiber application instance.
-func NewFiber(config *viper.Viper, validate *FiberValidator, log *logrus.Logger) *fiber.App {
+func NewFiber(cfg *config.Config, log *logrus.Logger, validate *FiberValidator) *fiber.App {
+	readTimeout := 30 * time.Second
+	writeTimeout := 30 * time.Second
+	idleTimeout := 60 * time.Second
+	_ = readTimeout
+	_ = writeTimeout
+	_ = idleTimeout
+
 	app := fiber.New(fiber.Config{
-		AppName:         config.GetString("app.name"),
+		AppName:         cfg.App.Name,
 		StrictRouting:   true,
 		CaseSensitive:   true,
 		StructValidator: validate,
 		ErrorHandler:    errorHandler(log),
+		BodyLimit:       10 * 1024 * 1024,
 	})
 
 	app.Use(requestid.New())
 	app.Use(func(c fiber.Ctx) error {
 		ctx := context.WithValue(c.Context(), "request_id", c.GetRespHeader("X-Request-Id"))
 		c.SetContext(ctx)
+		c.Locals("request_id", c.GetRespHeader("X-Request-Id"))
 		return c.Next()
 	})
 	app.Use(recover.New())
@@ -39,8 +49,43 @@ func NewFiber(config *viper.Viper, validate *FiberValidator, log *logrus.Logger)
 		AllowMethods: []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"},
 		AllowHeaders: []string{"Origin", "Content-Type", "Accept", "Authorization"},
 	}))
+	app.Use(accessLogger(log))
 
 	return app
+}
+
+func accessLogger(log *logrus.Logger) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		err := c.Next()
+
+		status := c.Response().StatusCode()
+		var fiberErr *fiber.Error
+		if errors.As(err, &fiberErr) {
+			status = fiberErr.Code
+		}
+		var appErr *apperrors.AppError
+		if errors.As(err, &appErr) {
+			status = appErr.Code
+		}
+
+		fields := logrus.Fields{
+			"method": c.Method(),
+			"path":   c.Path(),
+			"status": status,
+		}
+		if rid, ok := c.Locals("request_id").(string); ok {
+			fields["rid"] = rid
+		}
+
+		entry := log.WithFields(fields)
+		if err != nil {
+			entry.WithError(err).Info("request completed with error")
+		} else {
+			entry.Info("request completed")
+		}
+
+		return err
+	}
 }
 
 func errorHandler(log *logrus.Logger) fiber.ErrorHandler {
@@ -65,7 +110,7 @@ func errorHandler(log *logrus.Logger) fiber.ErrorHandler {
 				details = append(details, fiber.Map{
 					"field":   fe.Field(),
 					"tag":     fe.Tag(),
-					"message": formatValidationError(fe),
+					"message": FormatValidationError(fe),
 				})
 			}
 			return response.ErrorResponseWithDetails(c, fiber.StatusUnprocessableEntity, "validation failed", details)
@@ -78,15 +123,12 @@ func errorHandler(log *logrus.Logger) fiber.ErrorHandler {
 
 		if errors.Is(err, gorm.ErrDuplicatedKey) {
 			msg := "duplicate entry"
-			if errors.As(err, &pgconn.PgError{}) {
-				// Check specific unique index
-				var pgErr *pgconn.PgError
-				if errors.As(err, &pgErr) {
-					if pgErr.ConstraintName == "idx_users_email" {
-						msg = "email already registered"
-					} else if pgErr.ConstraintName == "idx_users_phone" {
-						msg = "phone number already registered"
-					}
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) {
+				if pgErr.ConstraintName == "idx_users_email" {
+					msg = "email already registered"
+				} else if pgErr.ConstraintName == "idx_users_phone" {
+					msg = "phone number already registered"
 				}
 			}
 			return response.ErrorResponse(c, fiber.StatusConflict, msg)
