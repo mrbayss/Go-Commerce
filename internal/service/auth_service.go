@@ -10,7 +10,9 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/mrbayss/Go-Commerce/infrastructure/pkg/mailer"
 	apperrors "github.com/mrbayss/Go-Commerce/internal/domain"
+	"github.com/mrbayss/Go-Commerce/internal/entity"
 	"github.com/mrbayss/Go-Commerce/internal/model"
+	"github.com/mrbayss/Go-Commerce/internal/pkg/jwt"
 	"github.com/mrbayss/Go-Commerce/internal/pkg/otp"
 	"github.com/mrbayss/Go-Commerce/internal/repository"
 	"github.com/redis/go-redis/v9"
@@ -18,7 +20,13 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-type AuthService struct {
+type AuthService interface {
+	SignUp(ctx context.Context, request model.SignUpReq) (*model.SignUpRes, error)
+	VerifyOTP(ctx context.Context, request model.VerifyOTP) (*model.VerifyOTPRes, error)
+	ResendOTP(ctx context.Context, request model.ResendOTPReq) (*model.ResendOTPRes, error)
+}
+
+type authService struct {
 	AuthRepo         repository.AuthRepository
 	Log              *logrus.Logger
 	Redis            *redis.Client
@@ -28,6 +36,10 @@ type AuthService struct {
 	MaxSignupEmail   int
 	SignupRateWindow time.Duration
 	ResendCooldown   time.Duration
+	JWTSecret        string
+	JWTAccessExpiry  time.Duration
+	JWTRefreshExpiry time.Duration
+	JWTIssuer        string
 }
 
 type signupPending struct {
@@ -48,7 +60,11 @@ func NewAuthService(
 	maxsignupemail int,
 	signupratewindow time.Duration,
 	resendcooldown time.Duration,
-) *AuthService {
+	jwtSecret string,
+	jwtAccessExpiry time.Duration,
+	jwtRefreshExpiry time.Duration,
+	jwtIssuer string,
+) AuthService {
 	if otpttl <= 0 {
 		otpttl = 10 * time.Minute
 	}
@@ -61,7 +77,16 @@ func NewAuthService(
 	if resendcooldown <= 0 {
 		resendcooldown = 60 * time.Second
 	}
-	return &AuthService{
+	if jwtAccessExpiry <= 0 {
+		jwtAccessExpiry = 15 * time.Minute
+	}
+	if jwtRefreshExpiry <= 0 {
+		jwtRefreshExpiry = 7 * 24 * time.Hour
+	}
+	if jwtIssuer == "" {
+		jwtIssuer = "gocommerce"
+	}
+	return &authService{
 		AuthRepo:         authRepo,
 		Log:              log,
 		Redis:            redis,
@@ -71,10 +96,14 @@ func NewAuthService(
 		MaxSignupEmail:   maxsignupemail,
 		SignupRateWindow: signupratewindow,
 		ResendCooldown:   resendcooldown,
+		JWTSecret:        jwtSecret,
+		JWTAccessExpiry:  jwtAccessExpiry,
+		JWTRefreshExpiry: jwtRefreshExpiry,
+		JWTIssuer:        jwtIssuer,
 	}
 }
 
-func (as *AuthService) SignUp(ctx context.Context, request model.SignUpReq) (*model.SignUpRes, error) {
+func (as *authService) SignUp(ctx context.Context, request model.SignUpReq) (*model.SignUpRes, error) {
 	// Extract request_id from context
 	reqID, _ := ctx.Value("request_id").(string)
 	log := as.Log.WithFields(logrus.Fields{
@@ -176,6 +205,193 @@ func (as *AuthService) SignUp(ctx context.Context, request model.SignUpReq) (*mo
 	}
 
 	res := model.SignUpRes{
+		Email:     email,
+		ExpiredAt: time.Now().Add(as.OTPTtl),
+	}
+
+	return &res, nil
+}
+
+func (as *authService) VerifyOTP(ctx context.Context, request model.VerifyOTP) (*model.VerifyOTPRes, error) {
+	reqID, _ := ctx.Value("request_id").(string)
+	log := as.Log.WithFields(logrus.Fields{
+		"request_id": reqID,
+		"function":   "Auth.VerifyOTP",
+		"email":      request.Email,
+	})
+
+	email := strings.ToLower(strings.TrimSpace(request.Email))
+
+	if err := as.Validation.Struct(request); err != nil {
+		log.WithError(err).Error("validation failed")
+		return nil, err
+	}
+
+	otpKey := "signup:otp:" + email
+	pendingKey := "signup:pending:" + email
+
+	// Get hashed OTP from Redis
+	storedHash, err := as.Redis.Get(ctx, otpKey).Result()
+	if err == redis.Nil {
+		log.Error("otp expired or not found")
+		return nil, apperrors.Wrap(nil, http.StatusBadRequest, "OTP expired or invalid")
+	}
+	if err != nil {
+		log.WithError(err).Error("failed to get otp from redis")
+		return nil, apperrors.Wrap(err, http.StatusBadGateway, "failed to verify otp")
+	}
+
+	// Verify OTP
+	if !otp.Verify(request.CodeOTP, storedHash) {
+		log.Error("invalid otp code")
+		return nil, apperrors.Wrap(nil, http.StatusBadRequest, "invalid OTP code")
+	}
+
+	// Get pending signup data
+	pendingData, err := as.Redis.Get(ctx, pendingKey).Result()
+	if err == redis.Nil {
+		log.Error("pending signup expired or not found")
+		return nil, apperrors.Wrap(nil, http.StatusBadRequest, "signup session expired")
+	}
+	if err != nil {
+		log.WithError(err).Error("failed to get pending signup from redis")
+		return nil, apperrors.Wrap(err, http.StatusBadGateway, "failed to verify otp")
+	}
+
+	var pending signupPending
+	if err := json.Unmarshal([]byte(pendingData), &pending); err != nil {
+		log.WithError(err).Error("failed to unmarshal pending signup")
+		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to process signup")
+	}
+
+	// Check if email already exists (race condition)
+	exists, err := as.AuthRepo.Exists(ctx, "email", email)
+	if err != nil {
+		log.WithError(err).Error("failed to check user existence")
+		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to create user")
+	}
+	if exists {
+		log.Error("email already registered")
+		_ = as.Redis.Del(ctx, pendingKey, otpKey).Err()
+		return nil, apperrors.Wrap(nil, http.StatusConflict, "email already registered")
+	}
+
+	// Create user in DB
+	user := &entity.User{
+		Email:        pending.Email,
+		PasswordHash: &pending.PasswordHash,
+		FirstName:    pending.FirstName,
+		LastName:     pending.LastName,
+		Phone:        pending.Phone,
+		Role:         entity.UserRoleBuyer,
+		IsActive:     true,
+		IsVerified:   true,
+	}
+
+	createdUser, err := as.AuthRepo.Create(ctx, user)
+	if err != nil {
+		log.WithError(err).Error("failed to create user")
+		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to create user")
+	}
+
+	// Generate JWT tokens
+	tokenPair, err := jwt.GenerateTokenPair(
+		createdUser.ID.String(),
+		createdUser.Email,
+		string(createdUser.Role),
+		createdUser.IsVerified,
+		as.JWTSecret,
+		as.JWTAccessExpiry,
+		as.JWTRefreshExpiry,
+		as.JWTIssuer,
+	)
+	if err != nil {
+		log.WithError(err).Error("failed to generate tokens")
+		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to generate tokens")
+	}
+
+	// Clean up Redis keys
+	_ = as.Redis.Del(ctx, pendingKey, otpKey).Err()
+	_ = as.Redis.Del(ctx, "rl:signup:email:"+email).Err()
+
+	res := &model.VerifyOTPRes{
+		AccessToken:  tokenPair.AccessToken,
+		RefreshToken: tokenPair.RefreshToken,
+		TokenType:    tokenPair.TokenType,
+		ExpiresIn:    tokenPair.ExpiresIn,
+	}
+
+	return res, nil
+}
+
+func (as *authService) ResendOTP(ctx context.Context, request model.ResendOTPReq) (*model.ResendOTPRes, error) {
+	reqID, _ := ctx.Value("request_id").(string)
+	log := as.Log.WithFields(logrus.Fields{
+		"request_id": reqID,
+		"function":   "Auth.ResendOTP",
+		"email":      request.Email,
+	})
+
+	email := strings.ToLower(strings.TrimSpace(request.Email))
+
+	if err := as.Validation.Struct(request); err != nil {
+		log.WithError(err).Error("validation failed")
+		return nil, err
+	}
+
+	pendingKey := "signup:pending:" + email
+	otpKey := "signup:otp:" + email
+
+	// Check if pending signup exists
+	exists, err := as.Redis.Exists(ctx, pendingKey).Result()
+	if err != nil {
+		log.WithError(err).Error("failed to check pending signup")
+		return nil, apperrors.Wrap(err, http.StatusBadGateway, "failed to check signup session")
+	}
+	if exists == 0 {
+		log.Error("no pending signup found")
+		return nil, apperrors.Wrap(nil, http.StatusBadRequest, "no pending signup found, please signup first")
+	}
+
+	// Rate limit resend
+	rateKey := "rl:resend:email:" + email
+	n, err := as.Redis.Incr(ctx, rateKey).Result()
+	if err != nil {
+		log.WithError(err).Error("failed to rate limit resend")
+		return nil, apperrors.Wrap(err, http.StatusBadGateway, "failed to rate limit resend")
+	}
+	if n == 1 {
+		_ = as.Redis.Expire(ctx, rateKey, as.ResendCooldown).Err()
+	}
+	if int(n) > 1 {
+		log.WithField("attempts", n).Error("resend rate limit exceeded")
+		return nil, apperrors.Wrap(nil, http.StatusTooManyRequests, "please wait before requesting another OTP")
+	}
+
+	// Generate new OTP
+	codeOTP, err := otp.Generate()
+	if err != nil {
+		log.WithError(err).Error("failed to generate otp")
+		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed generated otp")
+	}
+
+	hashOTP := otp.Hash(codeOTP)
+
+	// Update OTP in Redis with new hash and refresh TTL
+	if err := as.Redis.Set(ctx, otpKey, hashOTP, as.OTPTtl).Err(); err != nil {
+		log.WithError(err).Error("failed to store otp in redis")
+		return nil, apperrors.Wrap(err, http.StatusBadGateway, "failed to store otp")
+	}
+
+	if err := as.Mail.SendTemplate(ctx, []string{email}, "GoCommerce OTP Verify", "otp_signup.html", mailer.OtpData{
+		Code:    codeOTP,
+		Expired: int(as.OTPTtl.Minutes()),
+	}); err != nil {
+		log.WithError(err).Error("failed to send otp email")
+		return nil, apperrors.Wrap(err, http.StatusBadGateway, "failed to send otp to email")
+	}
+
+	res := model.ResendOTPRes{
 		Email:     email,
 		ExpiredAt: time.Now().Add(as.OTPTtl),
 	}

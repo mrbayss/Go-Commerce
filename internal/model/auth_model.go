@@ -14,3 +14,24 @@ type SignUpRes struct {
 	Email     string    `json:"email"`
 	ExpiredAt time.Time `json:"expired_at"`
 }
+
+type VerifyOTP struct {
+	CodeOTP string `json:"code_otp" validate:"required,max=6"`
+	Email   string `json:"email" validate:"required,email,max=255"`
+}
+
+type VerifyOTPRes struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	TokenType    string `json:"token_type"`
+	ExpiresIn    int    `json:"expires_in"`
+}
+
+type ResendOTPReq struct {
+	Email string `json:"email" validate:"required,email,max=255"`
+}
+
+type ResendOTPRes struct {
+	Email     string    `json:"email"`
+	ExpiredAt time.Time `json:"expired_at"`
+}
