@@ -11,6 +11,7 @@ type Config struct {
 	Postgres PostgresConfig `mapstructure:"postgres"`
 	Redis    RedisConfig    `mapstructure:"redis"`
 	Auth     AuthConfig     `mapstructure:"auth"`
+	JWT      JWTConfig      `mapstructure:"jwt"`
 	SMTP     SMTPConfig     `mapstructure:"smtp"`
 }
 
@@ -63,4 +64,11 @@ type SMTPConfig struct {
 	FromName    string        `mapstructure:"from_name"`
 	TLSMode     string        `mapstructure:"tls_mode"`
 	Timeout     time.Duration `mapstructure:"timeout"`
+}
+
+type JWTConfig struct {
+	Secret        string        `mapstructure:"secret"`
+	AccessExpiry  time.Duration `mapstructure:"access_expiry"`
+	RefreshExpiry time.Duration `mapstructure:"refresh_expiry"`
+	Issuer        string        `mapstructure:"issuer"`
 }
