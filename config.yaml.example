@@ -30,6 +30,12 @@ auth:
     window: "10m"
   resend_cooldown: "60s"
 
+jwt:
+  secret: "your-super-secret-key-min-32-chars-long"
+  access_expiry: "15m"
+  refresh_expiry: "168h"
+  issuer: "gocommerce"
+
 smtp:
   host: "smtp.gmail.com"
   port: 587
