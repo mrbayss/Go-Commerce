@@ -55,6 +55,10 @@ func main() {
 		cfg.Auth.SignupRateLimit.Max,
 		cfg.Auth.SignupRateLimit.Window,
 		cfg.Auth.ResendCooldown,
+		cfg.JWT.Secret,
+		cfg.JWT.AccessExpiry,
+		cfg.JWT.RefreshExpiry,
+		cfg.JWT.Issuer,
 	)
 
 	// controller
@@ -63,9 +67,13 @@ func main() {
 	// HTTP server
 	appInstance := app.NewFiber(cfg, log, validator)
 
-	apiV1 := appInstance.Group("/api/v1")
-	router.SetupAuthRoutes(apiV1, authController)
+	//router
+	router.SetupRoutes(
+		appInstance,
+		authController,
+	)
 
+	// health check
 	appInstance.Get("/health", func(c fiber.Ctx) error {
 		return app.HealthCheck(c, database, redisClient)
 	})
