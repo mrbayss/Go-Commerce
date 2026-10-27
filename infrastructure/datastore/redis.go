@@ -1,16 +1,16 @@
-package redis
+package datastore
 
 import (
 	"context"
 	"fmt"
 
-	"github.com/mrbayss/Go-Commerce/internal/config"
-	redisClient "github.com/redis/go-redis/v9"
+	"github.com/mrbayss/Go-Commerce/infrastructure/config"
+	"github.com/redis/go-redis/v9"
 )
 
 // NewRedis creates a new Redis client and verifies the connection.
-func NewRedis(cfg *config.Config) *redisClient.Client {
-	rdb := redisClient.NewClient(&redisClient.Options{
+func NewRedis(cfg *config.Config) *redis.Client {
+	rdb := redis.NewClient(&redis.Options{
 		Addr:     cfg.Redis.Address,
 		Password: cfg.Redis.Pass,
 		DB:       cfg.Redis.DB,

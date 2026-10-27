@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/go-playground/validator/v10"
+	"github.com/mrbayss/Go-Commerce/infrastructure/pkg/mailer"
 	apperrors "github.com/mrbayss/Go-Commerce/internal/domain"
-	"github.com/mrbayss/Go-Commerce/internal/infra/mail"
 	"github.com/mrbayss/Go-Commerce/internal/model"
 	"github.com/mrbayss/Go-Commerce/internal/pkg/otp"
 	"github.com/mrbayss/Go-Commerce/internal/repository"
@@ -18,20 +18,16 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-type AuthConfig struct {
-	OTPTtl            time.Duration
-	MaxSignupPerEmail int
-	SignupRateWindow  time.Duration
-	ResendCooldown    time.Duration
-}
-
 type AuthService struct {
-	AuthRepo   repository.AuthRepository
-	Log        *logrus.Logger
-	Redis      *redis.Client
-	Validation *validator.Validate
-	Mail       *mail.Client
-	Config     AuthConfig
+	AuthRepo         repository.AuthRepository
+	Log              *logrus.Logger
+	Redis            *redis.Client
+	Validation       *validator.Validate
+	Mail             *mailer.Client
+	OTPTtl           time.Duration
+	MaxSignupEmail   int
+	SignupRateWindow time.Duration
+	ResendCooldown   time.Duration
 }
 
 type signupPending struct {
@@ -42,26 +38,39 @@ type signupPending struct {
 	Phone        *string `json:"phone,omitempty"`
 }
 
-func NewAuthService(authRepo repository.AuthRepository, log *logrus.Logger, redis *redis.Client, validation *validator.Validate, mail *mail.Client, cfg AuthConfig) *AuthService {
-	if cfg.OTPTtl <= 0 {
-		cfg.OTPTtl = 10 * time.Minute
+func NewAuthService(
+	authRepo repository.AuthRepository,
+	log *logrus.Logger,
+	redis *redis.Client,
+	validation *validator.Validate,
+	mail *mailer.Client,
+	otpttl time.Duration,
+	maxsignupemail int,
+	signupratewindow time.Duration,
+	resendcooldown time.Duration,
+) *AuthService {
+	if otpttl <= 0 {
+		otpttl = 10 * time.Minute
 	}
-	if cfg.MaxSignupPerEmail <= 0 {
-		cfg.MaxSignupPerEmail = 3
+	if maxsignupemail <= 0 {
+		maxsignupemail = 3
 	}
-	if cfg.SignupRateWindow <= 0 {
-		cfg.SignupRateWindow = 10 * time.Minute
+	if signupratewindow <= 0 {
+		signupratewindow = 10 * time.Minute
 	}
-	if cfg.ResendCooldown <= 0 {
-		cfg.ResendCooldown = 60 * time.Second
+	if resendcooldown <= 0 {
+		resendcooldown = 60 * time.Second
 	}
 	return &AuthService{
-		AuthRepo:   authRepo,
-		Log:        log,
-		Redis:      redis,
-		Validation: validation,
-		Mail:       mail,
-		Config:     cfg,
+		AuthRepo:         authRepo,
+		Log:              log,
+		Redis:            redis,
+		Validation:       validation,
+		Mail:             mail,
+		OTPTtl:           otpttl,
+		MaxSignupEmail:   maxsignupemail,
+		SignupRateWindow: signupratewindow,
+		ResendCooldown:   resendcooldown,
 	}
 }
 
@@ -101,9 +110,9 @@ func (as *AuthService) SignUp(ctx context.Context, request model.SignUpReq) (*mo
 		return nil, apperrors.Wrap(err, http.StatusBadGateway, "failed to rate limit signup")
 	}
 	if n == 1 {
-		_ = as.Redis.Expire(ctx, rateKey, as.Config.SignupRateWindow).Err()
+		_ = as.Redis.Expire(ctx, rateKey, as.SignupRateWindow).Err()
 	}
-	if int(n) > as.Config.MaxSignupPerEmail {
+	if int(n) > as.MaxSignupEmail {
 		log.WithField("attempts", n).Error("signup rate limit exceeded")
 		return nil, apperrors.Wrap(nil, http.StatusTooManyRequests, "too many signup attempts, try again later")
 	}
@@ -146,19 +155,19 @@ func (as *AuthService) SignUp(ctx context.Context, request model.SignUpReq) (*mo
 	// Store pending signup + hashed OTP in Redis; account row is only created after OTP verification.
 	pendingKey := "signup:pending:" + email
 	otpKey := "signup:otp:" + email
-	if err := as.Redis.Set(ctx, pendingKey, string(pendingBytes), as.Config.OTPTtl).Err(); err != nil {
+	if err := as.Redis.Set(ctx, pendingKey, string(pendingBytes), as.OTPTtl).Err(); err != nil {
 		log.WithError(err).Error("failed to store pending signup in redis")
 		return nil, apperrors.Wrap(err, http.StatusBadGateway, "failed to store signup session")
 	}
-	if err := as.Redis.Set(ctx, otpKey, hashOTP, as.Config.OTPTtl).Err(); err != nil {
+	if err := as.Redis.Set(ctx, otpKey, hashOTP, as.OTPTtl).Err(); err != nil {
 		log.WithError(err).Error("failed to store otp in redis")
 		_ = as.Redis.Del(ctx, pendingKey).Err()
 		return nil, apperrors.Wrap(err, http.StatusBadGateway, "failed to store otp")
 	}
 
-	if err := as.Mail.SendTemplate(ctx, []string{email}, "GoCommerce OTP Verify", "otp_signup.html", mail.OtpData{
+	if err := as.Mail.SendTemplate(ctx, []string{email}, "GoCommerce OTP Verify", "otp_signup.html", mailer.OtpData{
 		Code:    codeOTP,
-		Expired: int(as.Config.OTPTtl.Minutes()),
+		Expired: int(as.OTPTtl.Minutes()),
 	}); err != nil {
 		log.WithError(err).Error("failed to send otp email")
 		// Roll back redis writes on email failure.
@@ -168,7 +177,7 @@ func (as *AuthService) SignUp(ctx context.Context, request model.SignUpReq) (*mo
 
 	res := model.SignUpRes{
 		Email:     email,
-		ExpiredAt: time.Now().Add(as.Config.OTPTtl),
+		ExpiredAt: time.Now().Add(as.OTPTtl),
 	}
 
 	return &res, nil

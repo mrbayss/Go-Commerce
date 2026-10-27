@@ -10,7 +10,8 @@ import (
 	"github.com/gofiber/fiber/v3/middleware/recover"
 	"github.com/gofiber/fiber/v3/middleware/requestid"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/mrbayss/Go-Commerce/internal/config"
+	"github.com/mrbayss/Go-Commerce/infrastructure/config"
+	"github.com/mrbayss/Go-Commerce/infrastructure/validation"
 	apperrors "github.com/mrbayss/Go-Commerce/internal/domain"
 	"github.com/mrbayss/Go-Commerce/internal/model/response"
 	"github.com/sirupsen/logrus"
@@ -18,7 +19,7 @@ import (
 )
 
 // NewFiber creates and configures a new Fiber application instance.
-func NewFiber(cfg *config.Config, log *logrus.Logger, validate *FiberValidator) *fiber.App {
+func NewFiber(cfg *config.Config, log *logrus.Logger, validate *validation.FiberValidator) *fiber.App {
 	app := fiber.New(fiber.Config{
 		AppName:         cfg.App.Name,
 		StrictRouting:   true,
@@ -66,7 +67,7 @@ func errorHandler(log *logrus.Logger) fiber.ErrorHandler {
 				details = append(details, fiber.Map{
 					"field":   fe.Field(),
 					"tag":     fe.Tag(),
-					"message": FormatValidationError(fe),
+					"message": validation.FormatValidationError(fe),
 				})
 			}
 			return response.ErrorResponseWithDetails(c, fiber.StatusUnprocessableEntity, "validation failed", details)

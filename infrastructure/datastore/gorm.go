@@ -1,14 +1,14 @@
-package db
+package datastore
 
 import (
 	"fmt"
 
-	"github.com/mrbayss/Go-Commerce/internal/config"
+	"github.com/mrbayss/Go-Commerce/infrastructure/config"
 	"github.com/mrbayss/Go-Commerce/internal/entity"
 	"github.com/sirupsen/logrus"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	gormlogger "gorm.io/gorm/logger"
+	"gorm.io/gorm/logger"
 )
 
 // AutoMigrate migrates all entity schemas into the database.
@@ -55,11 +55,11 @@ func NewDatabase(cfg *config.Config, log *logrus.Logger) *gorm.DB {
 	)
 
 	// Configure GORM logger based on environment
-	var gormLogger gormlogger.Interface
+	var gormLogger logger.Interface
 	if cfg.App.Environment == "development" {
-		gormLogger = gormlogger.Default.LogMode(gormlogger.Info)
+		gormLogger = logger.Default.LogMode(logger.Info)
 	} else {
-		gormLogger = gormlogger.Discard
+		gormLogger = logger.Discard
 	}
 
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{

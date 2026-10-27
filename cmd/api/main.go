@@ -8,12 +8,13 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v3"
-	infraApp "github.com/mrbayss/Go-Commerce/internal/app"
-	"github.com/mrbayss/Go-Commerce/internal/config"
+	"github.com/mrbayss/Go-Commerce/infrastructure/app"
+	"github.com/mrbayss/Go-Commerce/infrastructure/config"
+	"github.com/mrbayss/Go-Commerce/infrastructure/datastore"
+	"github.com/mrbayss/Go-Commerce/infrastructure/logger"
+	"github.com/mrbayss/Go-Commerce/infrastructure/pkg/mailer"
+	"github.com/mrbayss/Go-Commerce/infrastructure/validation"
 	"github.com/mrbayss/Go-Commerce/internal/controller"
-	infraDb "github.com/mrbayss/Go-Commerce/internal/infra/db"
-	infraMail "github.com/mrbayss/Go-Commerce/internal/infra/mail"
-	infraRedis "github.com/mrbayss/Go-Commerce/internal/infra/redis"
 	"github.com/mrbayss/Go-Commerce/internal/repository"
 	"github.com/mrbayss/Go-Commerce/internal/router"
 	"github.com/mrbayss/Go-Commerce/internal/service"
@@ -25,11 +26,11 @@ func main() {
 		panic(err)
 	}
 
-	log := config.NewLogger(cfg)
-	validator := infraApp.NewValidation()
-	database := infraDb.NewDatabase(cfg, log)
-	redisClient := infraRedis.NewRedis(cfg)
-	mailer := infraMail.NewClient(&infraMail.SMTPConfig{
+	log := logger.NewLogger(cfg)
+	validator := validation.NewValidation()
+	database := datastore.NewDatabase(cfg, log)
+	redisClient := datastore.NewRedis(cfg)
+	mailer := mailer.NewClient(&mailer.SMTPConfig{
 		Host:        cfg.SMTP.Host,
 		Port:        cfg.SMTP.Port,
 		Username:    cfg.SMTP.Username,
@@ -44,25 +45,29 @@ func main() {
 	authRepo := repository.NewAuthRepository(database)
 
 	// service
-	authCfg := service.AuthConfig{
-		OTPTtl:            cfg.Auth.OTPTtl,
-		MaxSignupPerEmail: cfg.Auth.SignupRateLimit.Max,
-		SignupRateWindow:  cfg.Auth.SignupRateLimit.Window,
-		ResendCooldown:    cfg.Auth.ResendCooldown,
-	}
-	authService := service.NewAuthService(authRepo, log, redisClient, validator.Validator, mailer, authCfg)
+	authService := service.NewAuthService(
+		authRepo,
+		log,
+		redisClient,
+		validator.Validator,
+		mailer,
+		cfg.Auth.OTPTtl,
+		cfg.Auth.SignupRateLimit.Max,
+		cfg.Auth.SignupRateLimit.Window,
+		cfg.Auth.ResendCooldown,
+	)
 
 	// controller
 	authController := controller.NewAuthController(authService)
 
 	// HTTP server
-	appInstance := infraApp.NewFiber(cfg, log, validator)
+	appInstance := app.NewFiber(cfg, log, validator)
 
 	apiV1 := appInstance.Group("/api/v1")
 	router.SetupAuthRoutes(apiV1, authController)
 
 	appInstance.Get("/health", func(c fiber.Ctx) error {
-		return infraApp.HealthCheck(c, database, redisClient)
+		return app.HealthCheck(c, database, redisClient)
 	})
 
 	// Start server in a goroutine so we can wait for signals

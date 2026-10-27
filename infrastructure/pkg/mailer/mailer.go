@@ -1,4 +1,4 @@
-package mail
+package mailer
 
 import (
 	"bytes"
@@ -121,7 +121,7 @@ func (c *Client) Send(ctx context.Context, msg *EmailMessage) error {
 // SendTemplate renders an embedded HTML template and sends it.
 func (c *Client) SendTemplate(ctx context.Context, to []string, subject, templateName string, data any) error {
 	if _, ok := c.templates[templateName]; !ok {
-		raw, err := embeddedTemplates.ReadFile(templateName)
+		raw, err := embeddedTemplates.ReadFile("templates/" + templateName)
 		if err != nil {
 			return err
 		}

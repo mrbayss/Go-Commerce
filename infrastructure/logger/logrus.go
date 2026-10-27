@@ -1,13 +1,14 @@
-package config
+package logger
 
 import (
 	"os"
 
+	"github.com/mrbayss/Go-Commerce/infrastructure/config"
 	"github.com/sirupsen/logrus"
 )
 
 // NewLogger creates a new logrus.Logger instance with JSON formatting.
-func NewLogger(cfg *Config) *logrus.Logger {
+func NewLogger(cfg *config.Config) *logrus.Logger {
 	log := logrus.New()
 	level, err := logrus.ParseLevel(cfg.Log.Level)
 	if err != nil {
