@@ -1,0 +1,479 @@
+openapi: 3.1.0
+info:
+  title: GoCommerce API
+  description: >-
+    REST API for GoCommerce authentication flows (signup with OTP verification).
+    Base path: /api/v1. Authentication endpoints are public (no bearer token required).
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080
+    description: Local development
+tags:
+  - name: Health
+  - name: Auth
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      description: Reports server status and component connectivity (database + redis).
+      responses:
+        "200":
+          description: Health status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              example:
+                status: ok
+                components:
+                  database: ok
+                  redis: ok
+
+  /api/v1/auth/signup:
+    post:
+      tags: [Auth]
+      summary: Sign up and request OTP
+      description: >-
+        Creates a pending signup session in Redis, generates a 6-digit OTP sent to
+        the provided email, and returns the OTP expiry time. The account row is only
+        created after successful OTP verification. Rate limited to 3 attempts per
+        email per 1 minute window.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignUpReq"
+            example:
+              email: user@example.com
+              password: "StrongPass1!"
+              first_name: Budi
+              last_name: Santoso
+              phone: "6281234567890"
+      responses:
+        "200":
+          description: Signup accepted, OTP sent
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/SignUpRes"
+              example:
+                success: true
+                message: "success signup, verify otp send to your mail"
+                data:
+                  email: user@example.com
+                  expired_at: "2026-10-27T12:05:00Z"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          description: Email already registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
+              example:
+                success: false
+                message: "email already registered"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          description: Too many signup attempts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
+              example:
+                success: false
+                message: "too many signup attempts, try again later"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "502":
+          description: Redis/SMTP failure
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
+              examples:
+                redis:
+                  value:
+                    success: false
+                    message: "failed to store signup session"
+                smtp:
+                  value:
+                    success: false
+                    message: "failed to send otp to email"
+
+  /api/v1/auth/verify-otp:
+    post:
+      tags: [Auth]
+      summary: Verify OTP and issue JWT tokens
+      description: >-
+        Verifies the OTP code for the given email. On success, creates the user
+        account, deletes pending signup/OTP keys, and returns access + refresh
+        tokens. OTP and pending signup expire after the configured TTL (default 5 minutes).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VerifyOTPReq"
+            example:
+              email: user@example.com
+              code_otp: "123456"
+      responses:
+        "200":
+          description: OTP verified, tokens issued
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/VerifyOTPRes"
+              example:
+                success: true
+                message: "OTP verified successfully"
+                data:
+                  access_token: "eyJhbGciOiJIUzI1NiIs..."
+                  refresh_token: "eyJhbGciOiJIUzI1NiIs..."
+                  token_type: Bearer
+                  expires_in: 900
+        "400":
+          description: OTP expired/invalid or signup session expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
+              examples:
+                otp_expired:
+                  value:
+                    success: false
+                    message: "OTP expired or invalid"
+                otp_invalid:
+                  value:
+                    success: false
+                    message: "invalid OTP code"
+                session_expired:
+                  value:
+                    success: false
+                    message: "signup session expired"
+        "409":
+          description: Email already registered (race)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
+              example:
+                success: false
+                message: "email already registered"
+        "422":
+          description: Validation failed (422) with field details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
+              example:
+                success: false
+                message: "validation failed"
+                data:
+                  - field: Email
+                    tag: email
+                    message: "Email must be a valid email"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
+              examples:
+                process_signup:
+                  value:
+                    success: false
+                    message: "failed to process signup"
+                create_user:
+                  value:
+                    success: false
+                    message: "failed to create user"
+                generate_tokens:
+                  value:
+                    success: false
+                    message: "failed to generate tokens"
+                internal:
+                  value:
+                    success: false
+                    message: "internal server error"
+        "502":
+          description: Redis failure
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
+              examples:
+                get_otp:
+                  value:
+                    success: false
+                    message: "failed to verify otp"
+                store_signup:
+                  value:
+                    success: false
+                    message: "failed to store pending signup"
+
+  /api/v1/auth/resend-otp:
+    post:
+      tags: [Auth]
+      summary: Resend OTP
+      description: >-
+        Resends OTP to the email of a pending signup. Requires an existing pending
+        signup session. Cooldown of 60 seconds between resend requests (max 1 per cooldown).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResendOTPReq"
+            example:
+              email: user@example.com
+      responses:
+        "200":
+          description: OTP resent
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ResendOTPRes"
+              example:
+                success: true
+                message: "OTP resent successfully"
+                data:
+                  email: user@example.com
+                  expired_at: "2026-10-27T12:10:00Z"
+        "400":
+          description: No pending signup found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
+              example:
+                success: false
+                message: "no pending signup found, please signup first"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          description: Resend cooldown active
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
+              example:
+                success: false
+                message: "please wait before requesting another OTP"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
+              examples:
+                generate_otp:
+                  value:
+                    success: false
+                    message: "failed generated otp"
+                internal:
+                  value:
+                    success: false
+                    message: "internal server error"
+        "502":
+          description: Redis/SMTP failure
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
+              examples:
+                check_pending:
+                  value:
+                    success: false
+                    message: "failed to check signup session"
+                rate_limit:
+                  value:
+                    success: false
+                    message: "failed to rate limit resend"
+                store_otp:
+                  value:
+                    success: false
+                    message: "failed to store otp"
+                send_otp:
+                  value:
+                    success: false
+                    message: "failed to send otp to email"
+
+components:
+  schemas:
+    StandardResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        data:
+          description: Optional payload (omitted on error)
+    ValidationErrorDetail:
+      type: object
+      properties:
+        field:
+          type: string
+        tag:
+          type: string
+        message:
+          type: string
+    SignUpReq:
+      type: object
+      required: [email, password, first_name, last_name]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 255
+        password:
+          type: string
+          minLength: 8
+          maxLength: 72
+          description: Must contain uppercase, lowercase, digit, and symbol; no whitespace.
+          pattern: '^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d\s]).+$'
+        first_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        last_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        phone:
+          type: string
+          description: Indonesian number starting with 62, regex ^628[1-9][0-9]{7,11}$.
+          pattern: '^628[1-9][0-9]{7,11}$'
+    SignUpRes:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        expired_at:
+          type: string
+          format: date-time
+    VerifyOTPReq:
+      type: object
+      required: [code_otp, email]
+      properties:
+        code_otp:
+          type: string
+          maxLength: 6
+        email:
+          type: string
+          format: email
+          maxLength: 255
+    VerifyOTPRes:
+      type: object
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        token_type:
+          type: string
+          example: Bearer
+        expires_in:
+          type: integer
+          description: Access token lifetime in seconds (default 900).
+    ResendOTPReq:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 255
+    ResendOTPRes:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        expired_at:
+          type: string
+          format: date-time
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        components:
+          type: object
+          properties:
+            database:
+              type: string
+            redis:
+              type: string
+
+  responses:
+    BadRequest:
+      description: Bad request (malformed body)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/StandardResponse"
+          example:
+            success: false
+            message: "invalid request body"
+    ValidationError:
+      description: Validation failed (422) with field details
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/StandardResponse"
+              - type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ValidationErrorDetail"
+          example:
+            success: false
+            message: "validation failed"
+            data:
+              - field: Email
+                tag: email
+                message: "Email must be a valid email"
+              - field: Password
+                tag: min
+                message: "Password must be at least 8 characters"
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/StandardResponse"
+          example:
+            success: false
+            message: "internal server error"
+    RateLimited:
+      description: Rate limited
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/StandardResponse"
