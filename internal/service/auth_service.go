@@ -33,9 +33,10 @@ type authService struct {
 	Validation       *validator.Validate
 	Mail             *mailer.Client
 	OTPTtl           time.Duration
-	MaxSignupEmail   int
 	SignupRateWindow time.Duration
 	ResendCooldown   time.Duration
+	MaxSignupPerHour int
+	MaxSignupPerDay  int
 	JWTSecret        string
 	JWTAccessExpiry  time.Duration
 	JWTRefreshExpiry time.Duration
@@ -57,35 +58,15 @@ func NewAuthService(
 	validation *validator.Validate,
 	mail *mailer.Client,
 	otpttl time.Duration,
-	maxsignupemail int,
 	signupratewindow time.Duration,
 	resendcooldown time.Duration,
+	maxsignupperhour int,
+	maxsignupperday int,
 	jwtSecret string,
 	jwtAccessExpiry time.Duration,
 	jwtRefreshExpiry time.Duration,
 	jwtIssuer string,
 ) AuthService {
-	if otpttl <= 0 {
-		otpttl = 10 * time.Minute
-	}
-	if maxsignupemail <= 0 {
-		maxsignupemail = 3
-	}
-	if signupratewindow <= 0 {
-		signupratewindow = 10 * time.Minute
-	}
-	if resendcooldown <= 0 {
-		resendcooldown = 60 * time.Second
-	}
-	if jwtAccessExpiry <= 0 {
-		jwtAccessExpiry = 15 * time.Minute
-	}
-	if jwtRefreshExpiry <= 0 {
-		jwtRefreshExpiry = 7 * 24 * time.Hour
-	}
-	if jwtIssuer == "" {
-		jwtIssuer = "gocommerce"
-	}
 	return &authService{
 		AuthRepo:         authRepo,
 		Log:              log,
@@ -93,9 +74,10 @@ func NewAuthService(
 		Validation:       validation,
 		Mail:             mail,
 		OTPTtl:           otpttl,
-		MaxSignupEmail:   maxsignupemail,
 		SignupRateWindow: signupratewindow,
 		ResendCooldown:   resendcooldown,
+		MaxSignupPerHour: maxsignupperhour,
+		MaxSignupPerDay:  maxsignupperday,
 		JWTSecret:        jwtSecret,
 		JWTAccessExpiry:  jwtAccessExpiry,
 		JWTRefreshExpiry: jwtRefreshExpiry,
@@ -103,8 +85,82 @@ func NewAuthService(
 	}
 }
 
+const rateLimitScript = `
+	local email = KEYS[1]
+	local minuteKey = KEYS[2]
+	local hourKey = KEYS[3]
+	local dayKey = KEYS[4]
+
+	local minuteWindow = tonumber(ARGV[1])
+	local hourMax      = tonumber(ARGV[2])
+	local dayMax       = tonumber(ARGV[3])
+	local hourWindowSec = tonumber(ARGV[4])
+
+	-- Layer 1: Minute cooldown - if key exists, reject
+	if redis.call("EXISTS", minuteKey) == 1 then
+		return "minute_cooldown_active"
+	end
+
+	-- Set minute cooldown with TTL
+	redis.call("SET", minuteKey, "1", "EX", minuteWindow)
+
+	-- Layer 2: Hour counter
+	local hourCount = redis.call("INCR", hourKey)
+	if hourCount == 1 then
+		redis.call("EXPIRE", hourKey, hourWindowSec)
+	end
+	if hourCount > hourMax then
+		return "hour_limit_exceeded: " .. hourCount .. "/" .. hourMax
+	end
+
+	-- Layer 3: Day counter
+	local dayCount = redis.call("INCR", dayKey)
+	if dayCount == 1 then
+		redis.call("EXPIRE", dayKey, 86400)
+	end
+	if dayCount > dayMax then
+		return "day_limit_exceeded: " .. dayCount .. "/" .. dayMax
+	end
+
+	return nil
+`
+
+func (as *authService) checkRateLimit(ctx context.Context, email string, minuteWindow time.Duration, hourWindowSec int) error {
+	log := as.Log.WithFields(logrus.Fields{
+		"request_id": ctx.Value("request_id"),
+		"function":   "Auth.checkRateLimit",
+		"email":      email,
+	})
+
+	emailLower := strings.ToLower(strings.TrimSpace(email))
+
+	minuteKey := "rl:rate:signup:minute:" + emailLower
+	hourKey := "rl:rate:signup:hour:" + emailLower
+	dayKey := "rl:rate:signup:day:" + emailLower
+
+	result, err := as.Redis.Eval(ctx, rateLimitScript, []string{
+		emailLower, minuteKey, hourKey, dayKey,
+	}, int(minuteWindow.Seconds()), hourWindowSec, as.MaxSignupPerDay, int(as.SignupRateWindow.Seconds())).Result()
+	if err != nil && err != redis.Nil {
+		log.WithError(err).Error("failed to execute rate limit lua script")
+		return apperrors.Wrap(err, http.StatusBadGateway, "failed to check rate limit")
+	}
+
+	if err == redis.Nil || result == nil {
+		return nil
+	}
+
+	errorMsg, ok := result.(string)
+	if !ok {
+		log.Error("unexpected rate limit script result type")
+		return apperrors.Wrap(nil, http.StatusInternalServerError, "failed to check rate limit")
+	}
+
+	log.WithField("error", errorMsg).Error("rate limit exceeded")
+	return apperrors.Wrap(nil, http.StatusTooManyRequests, "rate limit exceeded: "+errorMsg)
+}
+
 func (as *authService) SignUp(ctx context.Context, request model.SignUpReq) (*model.SignUpRes, error) {
-	// Extract request_id from context
 	reqID, _ := ctx.Value("request_id").(string)
 	log := as.Log.WithFields(logrus.Fields{
 		"request_id": reqID,
@@ -114,13 +170,11 @@ func (as *authService) SignUp(ctx context.Context, request model.SignUpReq) (*mo
 
 	email := strings.ToLower(strings.TrimSpace(request.Email))
 
-	// validate struct
 	if err := as.Validation.Struct(request); err != nil {
 		log.WithError(err).Error("validation failed")
 		return nil, err
 	}
 
-	// Precheck duplicate account at DB (cheap, before paying bcrypt cost).
 	exists, err := as.AuthRepo.Exists(ctx, "email", email)
 	if err != nil {
 		log.WithError(err).Error("failed to lookup user")
@@ -131,22 +185,12 @@ func (as *authService) SignUp(ctx context.Context, request model.SignUpReq) (*mo
 		return nil, apperrors.Wrap(nil, http.StatusConflict, "email already registered")
 	}
 
-	// Redis rate limit: max N signup attempts per email per window (anti spam).
-	rateKey := "rl:signup:email:" + email
-	n, err := as.Redis.Incr(ctx, rateKey).Result()
-	if err != nil {
-		log.WithError(err).Error("failed to rate limit signup")
-		return nil, apperrors.Wrap(err, http.StatusBadGateway, "failed to rate limit signup")
-	}
-	if n == 1 {
-		_ = as.Redis.Expire(ctx, rateKey, as.SignupRateWindow).Err()
-	}
-	if int(n) > as.MaxSignupEmail {
-		log.WithField("attempts", n).Error("signup rate limit exceeded")
-		return nil, apperrors.Wrap(nil, http.StatusTooManyRequests, "too many signup attempts, try again later")
+	// 3-layer rate limit check using atomic Lua script
+	if err := as.checkRateLimit(ctx, email, as.ResendCooldown, as.MaxSignupPerHour); err != nil {
+		log.WithError(err).Error("signup rate limit exceeded")
+		return nil, err
 	}
 
-	// Hash password
 	hash, err := bcrypt.GenerateFromPassword([]byte(request.Password), bcrypt.DefaultCost)
 	if err != nil {
 		log.WithError(err).Error("failed to hash password")
@@ -181,7 +225,6 @@ func (as *authService) SignUp(ctx context.Context, request model.SignUpReq) (*mo
 
 	hashOTP := otp.Hash(codeOTP)
 
-	// Store pending signup + hashed OTP in Redis; account row is only created after OTP verification.
 	pendingKey := "signup:pending:" + email
 	otpKey := "signup:otp:" + email
 	if err := as.Redis.Set(ctx, pendingKey, string(pendingBytes), as.OTPTtl).Err(); err != nil {
@@ -199,7 +242,6 @@ func (as *authService) SignUp(ctx context.Context, request model.SignUpReq) (*mo
 		Expired: int(as.OTPTtl.Minutes()),
 	}); err != nil {
 		log.WithError(err).Error("failed to send otp email")
-		// Roll back redis writes on email failure.
 		_ = as.Redis.Del(ctx, pendingKey, otpKey).Err()
 		return nil, apperrors.Wrap(err, http.StatusBadGateway, "failed to send otp to email")
 	}
@@ -230,7 +272,6 @@ func (as *authService) VerifyOTP(ctx context.Context, request model.VerifyOTP) (
 	otpKey := "signup:otp:" + email
 	pendingKey := "signup:pending:" + email
 
-	// Get hashed OTP from Redis
 	storedHash, err := as.Redis.Get(ctx, otpKey).Result()
 	if err == redis.Nil {
 		log.Error("otp expired or not found")
@@ -241,13 +282,11 @@ func (as *authService) VerifyOTP(ctx context.Context, request model.VerifyOTP) (
 		return nil, apperrors.Wrap(err, http.StatusBadGateway, "failed to verify otp")
 	}
 
-	// Verify OTP
 	if !otp.Verify(request.CodeOTP, storedHash) {
 		log.Error("invalid otp code")
 		return nil, apperrors.Wrap(nil, http.StatusBadRequest, "invalid OTP code")
 	}
 
-	// Get pending signup data
 	pendingData, err := as.Redis.Get(ctx, pendingKey).Result()
 	if err == redis.Nil {
 		log.Error("pending signup expired or not found")
@@ -264,7 +303,6 @@ func (as *authService) VerifyOTP(ctx context.Context, request model.VerifyOTP) (
 		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to process signup")
 	}
 
-	// Check if email already exists (race condition)
 	exists, err := as.AuthRepo.Exists(ctx, "email", email)
 	if err != nil {
 		log.WithError(err).Error("failed to check user existence")
@@ -276,7 +314,6 @@ func (as *authService) VerifyOTP(ctx context.Context, request model.VerifyOTP) (
 		return nil, apperrors.Wrap(nil, http.StatusConflict, "email already registered")
 	}
 
-	// Create user in DB
 	user := &entity.User{
 		Email:        pending.Email,
 		PasswordHash: &pending.PasswordHash,
@@ -294,7 +331,6 @@ func (as *authService) VerifyOTP(ctx context.Context, request model.VerifyOTP) (
 		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to create user")
 	}
 
-	// Generate JWT tokens
 	tokenPair, err := jwt.GenerateTokenPair(
 		createdUser.ID.String(),
 		createdUser.Email,
@@ -310,9 +346,10 @@ func (as *authService) VerifyOTP(ctx context.Context, request model.VerifyOTP) (
 		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to generate tokens")
 	}
 
-	// Clean up Redis keys
 	_ = as.Redis.Del(ctx, pendingKey, otpKey).Err()
-	_ = as.Redis.Del(ctx, "rl:signup:email:"+email).Err()
+	_ = as.Redis.Del(ctx, "rl:rate:signup:minute:"+email).Err()
+	_ = as.Redis.Del(ctx, "rl:rate:signup:hour:"+email).Err()
+	_ = as.Redis.Del(ctx, "rl:rate:signup:day:"+email).Err()
 
 	res := &model.VerifyOTPRes{
 		AccessToken:  tokenPair.AccessToken,
@@ -342,7 +379,6 @@ func (as *authService) ResendOTP(ctx context.Context, request model.ResendOTPReq
 	pendingKey := "signup:pending:" + email
 	otpKey := "signup:otp:" + email
 
-	// Check if pending signup exists
 	exists, err := as.Redis.Exists(ctx, pendingKey).Result()
 	if err != nil {
 		log.WithError(err).Error("failed to check pending signup")
@@ -353,22 +389,12 @@ func (as *authService) ResendOTP(ctx context.Context, request model.ResendOTPReq
 		return nil, apperrors.Wrap(nil, http.StatusBadRequest, "no pending signup found, please signup first")
 	}
 
-	// Rate limit resend
-	rateKey := "rl:resend:email:" + email
-	n, err := as.Redis.Incr(ctx, rateKey).Result()
-	if err != nil {
-		log.WithError(err).Error("failed to rate limit resend")
-		return nil, apperrors.Wrap(err, http.StatusBadGateway, "failed to rate limit resend")
-	}
-	if n == 1 {
-		_ = as.Redis.Expire(ctx, rateKey, as.ResendCooldown).Err()
-	}
-	if int(n) > 1 {
-		log.WithField("attempts", n).Error("resend rate limit exceeded")
-		return nil, apperrors.Wrap(nil, http.StatusTooManyRequests, "please wait before requesting another OTP")
+	// 3-layer rate limit check for resend using atomic Lua script
+	if err := as.checkRateLimit(ctx, email, as.ResendCooldown, as.MaxSignupPerHour); err != nil {
+		log.WithError(err).Error("resend rate limit exceeded")
+		return nil, err
 	}
 
-	// Generate new OTP
 	codeOTP, err := otp.Generate()
 	if err != nil {
 		log.WithError(err).Error("failed to generate otp")
@@ -377,7 +403,6 @@ func (as *authService) ResendOTP(ctx context.Context, request model.ResendOTPReq
 
 	hashOTP := otp.Hash(codeOTP)
 
-	// Update OTP in Redis with new hash and refresh TTL
 	if err := as.Redis.Set(ctx, otpKey, hashOTP, as.OTPTtl).Err(); err != nil {
 		log.WithError(err).Error("failed to store otp in redis")
 		return nil, apperrors.Wrap(err, http.StatusBadGateway, "failed to store otp")

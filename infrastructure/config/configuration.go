@@ -49,8 +49,10 @@ type RedisConfig struct {
 type AuthConfig struct {
 	OTPTtl          time.Duration `mapstructure:"otp_ttl"`
 	SignupRateLimit struct {
-		Max    int           `mapstructure:"max"`
-		Window time.Duration `mapstructure:"window"`
+		MaxPerHour int           `mapstructure:"max_per_hour"`
+		MaxPerDay  int           `mapstructure:"max_per_day"`
+		WindowHour time.Duration `mapstructure:"window_hour"`
+		WindowDay  time.Duration `mapstructure:"window_day"`
 	} `mapstructure:"signup_rate_limit"`
 	ResendCooldown time.Duration `mapstructure:"resend_cooldown"`
 }
