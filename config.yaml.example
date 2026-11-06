@@ -22,12 +22,15 @@ redis:
   address: "localhost:6379"
   pass: ""
   db: 0
+  dial_timeout: "5s"
 
 auth:
   otp_ttl: "10m"
   signup_rate_limit:
-    max: 3
-    window: "10m"
+    max_per_hour: 3
+    max_per_day: 6
+    window_hour: "1h"
+    window_day: "24h"
   resend_cooldown: "60s"
 
 jwt:

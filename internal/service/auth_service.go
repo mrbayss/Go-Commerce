@@ -86,10 +86,9 @@ func NewAuthService(
 }
 
 const rateLimitScript = `
-	local email = KEYS[1]
-	local minuteKey = KEYS[2]
-	local hourKey = KEYS[3]
-	local dayKey = KEYS[4]
+	local minuteKey = KEYS[1]
+	local hourKey = KEYS[2]
+	local dayKey = KEYS[3]
 
 	local minuteWindow = tonumber(ARGV[1])
 	local hourMax      = tonumber(ARGV[2])
@@ -125,7 +124,17 @@ const rateLimitScript = `
 	return nil
 `
 
-func (as *authService) checkRateLimit(ctx context.Context, email string, minuteWindow time.Duration, hourWindowSec int) error {
+func (as *authService) signupRateLimitKeys(email string) []string {
+	emailLower := strings.ToLower(strings.TrimSpace(email))
+	tag := "{" + emailLower + "}"
+	return []string{
+		"rl:signup:minute:" + tag,
+		"rl:signup:hour:" + tag,
+		"rl:signup:day:" + tag,
+	}
+}
+
+func (as *authService) checkRateLimit(ctx context.Context, email string) error {
 	log := as.Log.WithFields(logrus.Fields{
 		"request_id": ctx.Value("request_id"),
 		"function":   "Auth.checkRateLimit",
@@ -134,13 +143,14 @@ func (as *authService) checkRateLimit(ctx context.Context, email string, minuteW
 
 	emailLower := strings.ToLower(strings.TrimSpace(email))
 
-	minuteKey := "rl:rate:signup:minute:" + emailLower
-	hourKey := "rl:rate:signup:hour:" + emailLower
-	dayKey := "rl:rate:signup:day:" + emailLower
+	keys := as.signupRateLimitKeys(emailLower)
 
-	result, err := as.Redis.Eval(ctx, rateLimitScript, []string{
-		emailLower, minuteKey, hourKey, dayKey,
-	}, int(minuteWindow.Seconds()), hourWindowSec, as.MaxSignupPerDay, int(as.SignupRateWindow.Seconds())).Result()
+	result, err := as.Redis.Eval(ctx, rateLimitScript, keys,
+		int(as.ResendCooldown.Seconds()),
+		as.MaxSignupPerHour,
+		as.MaxSignupPerDay,
+		int(as.SignupRateWindow.Seconds()),
+	).Result()
 	if err != nil && err != redis.Nil {
 		log.WithError(err).Error("failed to execute rate limit lua script")
 		return apperrors.Wrap(err, http.StatusBadGateway, "failed to check rate limit")
@@ -186,7 +196,7 @@ func (as *authService) SignUp(ctx context.Context, request model.SignUpReq) (*mo
 	}
 
 	// 3-layer rate limit check using atomic Lua script
-	if err := as.checkRateLimit(ctx, email, as.ResendCooldown, as.MaxSignupPerHour); err != nil {
+	if err := as.checkRateLimit(ctx, email); err != nil {
 		log.WithError(err).Error("signup rate limit exceeded")
 		return nil, err
 	}
@@ -347,9 +357,7 @@ func (as *authService) VerifyOTP(ctx context.Context, request model.VerifyOTP) (
 	}
 
 	_ = as.Redis.Del(ctx, pendingKey, otpKey).Err()
-	_ = as.Redis.Del(ctx, "rl:rate:signup:minute:"+email).Err()
-	_ = as.Redis.Del(ctx, "rl:rate:signup:hour:"+email).Err()
-	_ = as.Redis.Del(ctx, "rl:rate:signup:day:"+email).Err()
+	_ = as.Redis.Del(ctx, as.signupRateLimitKeys(email)...).Err()
 
 	res := &model.VerifyOTPRes{
 		AccessToken:  tokenPair.AccessToken,
@@ -390,7 +398,7 @@ func (as *authService) ResendOTP(ctx context.Context, request model.ResendOTPReq
 	}
 
 	// 3-layer rate limit check for resend using atomic Lua script
-	if err := as.checkRateLimit(ctx, email, as.ResendCooldown, as.MaxSignupPerHour); err != nil {
+	if err := as.checkRateLimit(ctx, email); err != nil {
 		log.WithError(err).Error("resend rate limit exceeded")
 		return nil, err
 	}
