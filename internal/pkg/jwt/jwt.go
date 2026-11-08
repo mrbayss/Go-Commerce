@@ -1,6 +1,8 @@
 package jwt
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"time"
 
@@ -17,6 +19,7 @@ type Claims struct {
 	Email      string `json:"email"`
 	Role       string `json:"role"`
 	IsVerified bool   `json:"is_verified"`
+	SessionID  string `json:"session_id,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -27,14 +30,16 @@ type TokenPair struct {
 	ExpiresIn    int    `json:"expires_in"`
 }
 
-func GenerateAccessToken(userID, email, role string, isVerified bool, secret string, expiry time.Duration, issuer string) (string, error) {
+func GenerateAccessToken(sessionID, userID, email, role string, isVerified bool, secret string, expiry time.Duration, issuer string) (string, error) {
 	now := time.Now()
 	claims := Claims{
 		UserID:     userID,
 		Email:      email,
 		Role:       role,
 		IsVerified: isVerified,
+		SessionID:  sessionID,
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        sessionID,
 			Subject:   userID,
 			Issuer:    issuer,
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -45,9 +50,10 @@ func GenerateAccessToken(userID, email, role string, isVerified bool, secret str
 	return token.SignedString([]byte(secret))
 }
 
-func GenerateRefreshToken(userID, secret string, expiry time.Duration, issuer string) (string, error) {
+func GenerateRefreshToken(sessionID, userID, secret string, expiry time.Duration, issuer string) (string, error) {
 	now := time.Now()
 	claims := jwt.RegisteredClaims{
+		ID:        sessionID,
 		Subject:   userID,
 		Issuer:    issuer,
 		IssuedAt:  jwt.NewNumericDate(now),
@@ -57,12 +63,12 @@ func GenerateRefreshToken(userID, secret string, expiry time.Duration, issuer st
 	return token.SignedString([]byte(secret))
 }
 
-func GenerateTokenPair(userID, email, role string, isVerified bool, secret string, accessExpiry, refreshExpiry time.Duration, issuer string) (*TokenPair, error) {
-	accessToken, err := GenerateAccessToken(userID, email, role, isVerified, secret, accessExpiry, issuer)
+func GenerateTokenPair(sessionID, userID, email, role string, isVerified bool, secret string, accessExpiry, refreshExpiry time.Duration, issuer string) (*TokenPair, error) {
+	accessToken, err := GenerateAccessToken(sessionID, userID, email, role, isVerified, secret, accessExpiry, issuer)
 	if err != nil {
 		return nil, err
 	}
-	refreshToken, err := GenerateRefreshToken(userID, secret, refreshExpiry, issuer)
+	refreshToken, err := GenerateRefreshToken(sessionID, userID, secret, refreshExpiry, issuer)
 	if err != nil {
 		return nil, err
 	}
@@ -72,6 +78,12 @@ func GenerateTokenPair(userID, email, role string, isVerified bool, secret strin
 		TokenType:    "Bearer",
 		ExpiresIn:    int(accessExpiry.Seconds()),
 	}, nil
+}
+
+// HashToken hashes a token using SHA-256 for secure storage in Redis.
+func HashToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
 }
 
 func ValidateToken(tokenString, secret string) (*Claims, error) {
@@ -94,7 +106,7 @@ func ValidateToken(tokenString, secret string) (*Claims, error) {
 	return claims, nil
 }
 
-func ValidateRefreshToken(tokenString, secret string) (string, error) {
+func ValidateRefreshToken(tokenString, secret string) (userID string, sessionID string, err error) {
 	token, err := jwt.ParseWithClaims(tokenString, &jwt.RegisteredClaims{}, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, ErrInvalidToken
@@ -103,23 +115,23 @@ func ValidateRefreshToken(tokenString, secret string) (string, error) {
 	})
 	if err != nil {
 		if errors.Is(err, jwt.ErrTokenExpired) {
-			return "", ErrExpiredToken
+			return "", "", ErrExpiredToken
 		}
-		return "", ErrInvalidToken
+		return "", "", ErrInvalidToken
 	}
 	claims, ok := token.Claims.(*jwt.RegisteredClaims)
 	if !ok || !token.Valid {
-		return "", ErrInvalidToken
+		return "", "", ErrInvalidToken
 	}
-	return claims.Subject, nil
+	return claims.Subject, claims.ID, nil
 }
 
 func RefreshAccessToken(refreshToken, secret string, accessExpiry time.Duration, issuer string) (string, error) {
-	userID, err := ValidateRefreshToken(refreshToken, secret)
+	userID, sessionID, err := ValidateRefreshToken(refreshToken, secret)
 	if err != nil {
 		return "", err
 	}
 	// Need to fetch user details from DB to generate new access token with full claims
 	// This is a simplified version - in practice, fetch user from DB
-	return GenerateAccessToken(userID, "", "", false, secret, accessExpiry, issuer)
+	return GenerateAccessToken(sessionID, userID, "", "", false, secret, accessExpiry, issuer)
 }
