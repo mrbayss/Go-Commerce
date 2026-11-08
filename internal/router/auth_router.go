@@ -10,4 +10,5 @@ func SetupAuthRoutes(api fiber.Router, ac *controller.AuthController) {
 	auth.Post("/signup", ac.SignUp)
 	auth.Post("/verify-otp", ac.VerifyOTP)
 	auth.Post("/resend-otp", ac.ResendOTP)
+	auth.Post("/login", ac.Login)
 }

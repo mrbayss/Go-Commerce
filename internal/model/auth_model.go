@@ -20,7 +20,7 @@ type VerifyOTP struct {
 	Email   string `json:"email" validate:"required,email,max=255"`
 }
 
-type VerifyOTPRes struct {
+type TokenPairRes struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 	TokenType    string `json:"token_type"`
@@ -34,4 +34,9 @@ type ResendOTPReq struct {
 type ResendOTPRes struct {
 	Email     string    `json:"email"`
 	ExpiredAt time.Time `json:"expired_at"`
+}
+
+type LoginReq struct {
+	Email    string `json:"email" validate:"required,email,max=255"`
+	Password string `json:"password" validate:"required"`
 }

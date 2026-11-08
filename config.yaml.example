@@ -31,7 +31,11 @@ auth:
     max_per_day: 6
     window_hour: "1h"
     window_day: "24h"
+  login_rate_limit:
+    max_attempts: 5
+    lockout_time: "15m"
   resend_cooldown: "60s"
+  max_resend_per_session: 3
 
 jwt:
   secret: "your-super-secret-key-min-32-chars-long"

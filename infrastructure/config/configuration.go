@@ -54,7 +54,12 @@ type AuthConfig struct {
 		WindowHour time.Duration `mapstructure:"window_hour"`
 		WindowDay  time.Duration `mapstructure:"window_day"`
 	} `mapstructure:"signup_rate_limit"`
-	ResendCooldown time.Duration `mapstructure:"resend_cooldown"`
+	LoginRateLimit struct {
+		MaxAttempts int           `mapstructure:"max_attempts"`
+		LockoutTime time.Duration `mapstructure:"lockout_time"`
+	} `mapstructure:"login_rate_limit"`
+	ResendCooldown      time.Duration `mapstructure:"resend_cooldown"`
+	MaxResendPerSession int           `mapstructure:"max_resend_per_session"`
 }
 
 type SMTPConfig struct {

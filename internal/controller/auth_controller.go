@@ -58,3 +58,17 @@ func (ac *AuthController) ResendOTP(c fiber.Ctx) error {
 
 	return response.SuccessResponse(c, "OTP resent successfully", res)
 }
+
+func (ac *AuthController) Login(c fiber.Ctx) error {
+	var request model.LoginReq
+	if err := c.Bind().Body(&request); err != nil {
+		return err
+	}
+
+	res, err := ac.AuthService.Login(c, request)
+	if err != nil {
+		return err
+	}
+
+	return response.SuccessResponse(c, "success login", res)
+}

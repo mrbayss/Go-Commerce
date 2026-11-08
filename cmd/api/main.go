@@ -56,6 +56,9 @@ func main() {
 		cfg.Auth.ResendCooldown,
 		cfg.Auth.SignupRateLimit.MaxPerHour,
 		cfg.Auth.SignupRateLimit.MaxPerDay,
+		cfg.Auth.MaxResendPerSession,
+		cfg.Auth.LoginRateLimit.MaxAttempts,
+		cfg.Auth.LoginRateLimit.LockoutTime,
 		cfg.JWT.Secret,
 		cfg.JWT.AccessExpiry,
 		cfg.JWT.RefreshExpiry,
@@ -75,7 +78,7 @@ func main() {
 	)
 
 	// health check
-	appInstance.Get("/health", func(c fiber.Ctx) error {
+	appInstance.Get("/api/v1/health", func(c fiber.Ctx) error {
 		return app.HealthCheck(c, database, redisClient)
 	})
 
