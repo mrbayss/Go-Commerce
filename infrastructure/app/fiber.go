@@ -73,6 +73,15 @@ func errorHandler(log *logrus.Logger) fiber.ErrorHandler {
 			return response.ErrorResponseWithDetails(c, fiber.StatusUnprocessableEntity, "validation failed", details)
 		}
 
+		// AppError - general business logic errors
+		var appErr *apperrors.AppError
+		if errors.As(err, &appErr) {
+			if appErr.Details != nil {
+				return response.ErrorResponseWithDetails(c, appErr.Code, appErr.Message, appErr.Details)
+			}
+			return response.ErrorResponse(c, appErr.Code, appErr.Message)
+		}
+
 		// Database errors
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return response.ErrorResponse(c, fiber.StatusNotFound, "resource not found")
@@ -95,15 +104,6 @@ func errorHandler(log *logrus.Logger) fiber.ErrorHandler {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
 			return response.ErrorResponse(c, fiber.StatusConflict, "referenced resource does not exist")
-		}
-
-		// AppError - general business logic errors
-		var appErr *apperrors.AppError
-		if errors.As(err, &appErr) {
-			if appErr.Details != nil {
-				return response.ErrorResponseWithDetails(c, appErr.Code, appErr.Message, appErr.Details)
-			}
-			return response.ErrorResponse(c, appErr.Code, appErr.Message)
 		}
 
 		// Everything else — log the real error with logrus, return generic message
