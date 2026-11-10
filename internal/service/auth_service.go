@@ -24,15 +24,6 @@ import (
 	"gorm.io/gorm"
 )
 
-var dummyBcryptHash string
-
-func init() {
-	hash, err := bcrypt.GenerateFromPassword([]byte("dummy-login-salt-for-constant-time"), bcrypt.DefaultCost)
-	if err == nil {
-		dummyBcryptHash = string(hash)
-	}
-}
-
 type AuthService interface {
 	SignUp(ctx context.Context, request model.SignUpReq) (*model.SignUpRes, error)
 	VerifyOTP(ctx context.Context, request model.VerifyOTP) (*model.TokenPairRes, error)
@@ -41,23 +32,17 @@ type AuthService interface {
 }
 
 type authService struct {
-	AuthRepo         repository.AuthRepository
-	Log              *logrus.Logger
-	Redis            *redis.Client
-	Validation       *validator.Validate
-	Mail             *mailer.Client
-	OTPTtl           time.Duration
-	SignupRateWindow time.Duration
-	ResendCooldown      time.Duration
-	MaxSignupPerHour    int
-	MaxSignupPerDay     int
+	AuthRepo            repository.AuthRepository
+	Log                 *logrus.Logger
+	Redis               *redis.Client
+	Validation          *validator.Validate
+	Mail                *mailer.Client
+	OTPTtl              time.Duration
 	MaxResendPerSession int
-	LoginMaxAttempts    int
-	LoginLockoutTime time.Duration
-	JWTSecret        string
-	JWTAccessExpiry  time.Duration
-	JWTRefreshExpiry time.Duration
-	JWTIssuer        string
+	JWTSecret           string
+	JWTAccessExpiry     time.Duration
+	JWTRefreshExpiry    time.Duration
+	JWTIssuer           string
 }
 
 type signupPending struct {
@@ -75,13 +60,7 @@ func NewAuthService(
 	validation *validator.Validate,
 	mail *mailer.Client,
 	otpttl time.Duration,
-	signupratewindow time.Duration,
-	resendcooldown time.Duration,
-	maxsignupperhour int,
-	maxsignupperday int,
 	maxresendpersession int,
-	loginMaxAttempts int,
-	loginLockoutTime time.Duration,
 	jwtSecret string,
 	jwtAccessExpiry time.Duration,
 	jwtRefreshExpiry time.Duration,
@@ -97,13 +76,7 @@ func NewAuthService(
 		Validation:          validation,
 		Mail:                mail,
 		OTPTtl:              otpttl,
-		SignupRateWindow:    signupratewindow,
-		ResendCooldown:      resendcooldown,
-		MaxSignupPerHour:    maxsignupperhour,
-		MaxSignupPerDay:     maxsignupperday,
 		MaxResendPerSession: maxresendpersession,
-		LoginMaxAttempts:    loginMaxAttempts,
-		LoginLockoutTime:    loginLockoutTime,
 		JWTSecret:           jwtSecret,
 		JWTAccessExpiry:     jwtAccessExpiry,
 		JWTRefreshExpiry:    jwtRefreshExpiry,
@@ -279,40 +252,9 @@ func (as *authService) VerifyOTP(ctx context.Context, request model.VerifyOTP) (
 		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to create user")
 	}
 
-	sessionID := uuid.New().String()
-	tokenPair, err := jwt.GenerateTokenPair(
-		sessionID,
-		User.ID.String(),
-		User.Email,
-		string(User.Role),
-		User.IsVerified,
-		as.JWTSecret,
-		as.JWTAccessExpiry,
-		as.JWTRefreshExpiry,
-		as.JWTIssuer,
-	)
-	if err != nil {
-		log.WithError(err).Error("failed to generate tokens")
-		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to generate tokens")
-	}
-
 	_ = as.Redis.Del(ctx, keys.Pending, keys.OTP, keys.Attempts, keys.ResendCount).Err()
 
-	refreshTokenHash := jwt.HashToken(tokenPair.RefreshToken)
-	sessionKey := fmt.Sprintf("session:%s:%s", User.ID.String(), sessionID)
-	if err := as.Redis.Set(ctx, sessionKey, refreshTokenHash, as.JWTRefreshExpiry).Err(); err != nil {
-		log.WithError(err).Error("failed to store session in redis")
-		return nil, apperrors.Wrap(err, http.StatusBadGateway, "failed to store session")
-	}
-
-	res := &model.TokenPairRes{
-		AccessToken:  tokenPair.AccessToken,
-		RefreshToken: tokenPair.RefreshToken,
-		TokenType:    tokenPair.TokenType,
-		ExpiresIn:    tokenPair.ExpiresIn,
-	}
-
-	return res, nil
+	return as.createSession(ctx, log, User.ID.String(), User.Email, string(User.Role), User.IsVerified)
 }
 
 func (as *authService) ResendOTP(ctx context.Context, request model.ResendOTPReq) (*model.ResendOTPRes, error) {
@@ -392,7 +334,6 @@ func (as *authService) Login(ctx context.Context, request model.LoginReq) (*mode
 	user, err := as.AuthRepo.GetByColumn(ctx, "email", email)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			_ = bcrypt.CompareHashAndPassword([]byte(dummyBcryptHash), []byte(request.Password))
 			log.Warn("login failed: user not found")
 			return nil, apperrors.Wrap(nil, http.StatusBadRequest, "email or password is wrong")
 		}
@@ -412,13 +353,17 @@ func (as *authService) Login(ctx context.Context, request model.LoginReq) (*mode
 		return nil, apperrors.Wrap(nil, http.StatusForbidden, "account is not verified")
 	}
 
+	return as.createSession(ctx, log, user.ID.String(), user.Email, string(user.Role), user.IsVerified)
+}
+
+func (as *authService) createSession(ctx context.Context, log *logrus.Entry, userID, email, role string, isVerified bool) (*model.TokenPairRes, error) {
 	sessionID := uuid.New().String()
 	tokenPair, err := jwt.GenerateTokenPair(
 		sessionID,
-		user.ID.String(),
-		user.Email,
-		string(user.Role),
-		user.IsVerified,
+		userID,
+		email,
+		role,
+		isVerified,
 		as.JWTSecret,
 		as.JWTAccessExpiry,
 		as.JWTRefreshExpiry,
@@ -430,20 +375,18 @@ func (as *authService) Login(ctx context.Context, request model.LoginReq) (*mode
 	}
 
 	refreshTokenHash := jwt.HashToken(tokenPair.RefreshToken)
-	sessionKey := fmt.Sprintf("session:%s:%s", user.ID.String(), sessionID)
+	sessionKey := fmt.Sprintf("session:%s:%s", userID, sessionID)
 	if err := as.Redis.Set(ctx, sessionKey, refreshTokenHash, as.JWTRefreshExpiry).Err(); err != nil {
 		log.WithError(err).Error("failed to store session in redis")
 		return nil, apperrors.Wrap(err, http.StatusBadGateway, "failed to store session")
 	}
 
-	res := &model.TokenPairRes{
+	return &model.TokenPairRes{
 		AccessToken:  tokenPair.AccessToken,
 		RefreshToken: tokenPair.RefreshToken,
 		TokenType:    tokenPair.TokenType,
 		ExpiresIn:    tokenPair.ExpiresIn,
-	}
-
-	return res, nil
+	}, nil
 }
 
 type signupKeys struct {
@@ -454,21 +397,20 @@ type signupKeys struct {
 }
 
 func signupKeysFor(email string) signupKeys {
-	emailLower := strings.ToLower(strings.TrimSpace(email))
 	return signupKeys{
-		Pending:     "signup:pending:" + emailLower,
-		OTP:         "signup:otp:" + emailLower,
-		Attempts:    "signup:attempts:" + emailLower,
-		ResendCount: "signup:resend:" + emailLower,
+		Pending:     "signup:pending:" + email,
+		OTP:         "signup:otp:" + email,
+		Attempts:    "signup:attempts:" + email,
+		ResendCount: "signup:resend:" + email,
 	}
 }
 
 func (as *authService) getLoggerAndEmail(ctx context.Context, functionName string, email string) (*logrus.Entry, string) {
-	emaill := strings.ToLower(strings.TrimSpace(email))
+	email = strings.ToLower(strings.TrimSpace(email))
 	reqID := ctx.Value("request_id").(string)
 	return as.Log.WithFields(logrus.Fields{
 		"request_id": reqID,
 		"function":   functionName,
-		"email":      emaill,
-	}), emaill
+		"email":      email,
+	}), email
 }
