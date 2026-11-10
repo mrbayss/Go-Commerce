@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/mrbayss/Go-Commerce/infrastructure/pkg/mailer"
 	apperrors "github.com/mrbayss/Go-Commerce/internal/domain"
 	"github.com/mrbayss/Go-Commerce/internal/entity"
@@ -39,10 +40,8 @@ type authService struct {
 	Mail                *mailer.Client
 	OTPTtl              time.Duration
 	MaxResendPerSession int
-	JWTSecret           string
-	JWTAccessExpiry     time.Duration
-	JWTRefreshExpiry    time.Duration
-	JWTIssuer           string
+	OTPSecret           string
+	Tokenizer           jwt.Tokenizer
 }
 
 type signupPending struct {
@@ -61,10 +60,8 @@ func NewAuthService(
 	mail *mailer.Client,
 	otpttl time.Duration,
 	maxresendpersession int,
-	jwtSecret string,
-	jwtAccessExpiry time.Duration,
-	jwtRefreshExpiry time.Duration,
-	jwtIssuer string,
+	otpSecret string,
+	tokenizer jwt.Tokenizer,
 ) AuthService {
 	if maxresendpersession <= 0 {
 		maxresendpersession = 3
@@ -77,10 +74,8 @@ func NewAuthService(
 		Mail:                mail,
 		OTPTtl:              otpttl,
 		MaxResendPerSession: maxresendpersession,
-		JWTSecret:           jwtSecret,
-		JWTAccessExpiry:     jwtAccessExpiry,
-		JWTRefreshExpiry:    jwtRefreshExpiry,
-		JWTIssuer:           jwtIssuer,
+		OTPSecret:           otpSecret,
+		Tokenizer:           tokenizer,
 	}
 }
 
@@ -100,6 +95,18 @@ func (as *authService) SignUp(ctx context.Context, request model.SignUpReq) (*mo
 	if exists {
 		log.Error("email already registered")
 		return nil, apperrors.Wrap(nil, http.StatusConflict, "email already registered")
+	}
+
+	if request.Phone != "" {
+		phoneExists, err := as.AuthRepo.Exists(ctx, "phone", request.Phone)
+		if err != nil {
+			log.WithError(err).Error("failed to lookup phone")
+			return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to lookup user")
+		}
+		if phoneExists {
+			log.Error("phone number already registered")
+			return nil, apperrors.Wrap(nil, http.StatusConflict, "phone number already registered")
+		}
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(request.Password), bcrypt.DefaultCost)
@@ -134,7 +141,7 @@ func (as *authService) SignUp(ctx context.Context, request model.SignUpReq) (*mo
 		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed generated otp")
 	}
 
-	hashOTP := otp.Hash(codeOTP, as.JWTSecret, email)
+	hashOTP := otp.Hash(codeOTP, as.OTPSecret, email)
 
 	keys := signupKeysFor(email)
 	if err := as.Redis.Set(ctx, keys.Pending, string(pendingBytes), as.OTPTtl).Err(); err != nil {
@@ -148,14 +155,17 @@ func (as *authService) SignUp(ctx context.Context, request model.SignUpReq) (*mo
 	}
 	_ = as.Redis.Del(ctx, keys.Attempts, keys.ResendCount).Err()
 
-	if err := as.Mail.SendTemplate(ctx, []string{email}, "GoCommerce OTP Verify", "otp_signup.html", mailer.OtpData{
-		Code:    codeOTP,
-		Expired: int(as.OTPTtl.Minutes()),
-	}); err != nil {
-		log.WithError(err).Error("failed to send otp email")
-		_ = as.Redis.Del(ctx, keys.Pending, keys.OTP, keys.Attempts, keys.ResendCount).Err()
-		return nil, apperrors.Wrap(err, http.StatusBadGateway, "failed to send otp to email")
-	}
+	go func() {
+		mailCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		if err := as.Mail.SendTemplate(mailCtx, []string{email}, "GoCommerce OTP Verify", "otp_signup.html", mailer.OtpData{
+			Code:    codeOTP,
+			Expired: int(as.OTPTtl.Minutes()),
+		}); err != nil {
+			log.WithError(err).Error("failed to send otp email (async)")
+		}
+	}()
 
 	res := model.SignUpRes{
 		Email:     email,
@@ -185,7 +195,7 @@ func (as *authService) VerifyOTP(ctx context.Context, request model.VerifyOTP) (
 		return nil, apperrors.Wrap(err, http.StatusBadGateway, "failed to verify otp")
 	}
 
-	if !otp.Verify(request.CodeOTP, storedHash, as.JWTSecret, email) {
+	if !otp.Verify(request.CodeOTP, storedHash, as.OTPSecret, email) {
 		attempts, incrErr := as.Redis.Incr(ctx, keys.Attempts).Result()
 		if incrErr != nil {
 			log.WithError(incrErr).Error("failed to increment otp attempt counter")
@@ -244,9 +254,25 @@ func (as *authService) VerifyOTP(ctx context.Context, request model.VerifyOTP) (
 	User, err := as.AuthRepo.Create(ctx, user)
 	if err != nil {
 		if errors.Is(err, gorm.ErrDuplicatedKey) {
-			log.Error("email already registered")
 			_ = as.Redis.Del(ctx, keys.Pending, keys.OTP, keys.Attempts, keys.ResendCount).Err()
-			return nil, apperrors.Wrap(err, http.StatusConflict, "email already registered")
+
+			var pgErr *pgconn.PgError
+			msg := "duplicate entry"
+			if errors.As(err, &pgErr) {
+				log.WithError(err).WithField("constraint", pgErr.ConstraintName).Error("duplicate key violation")
+				switch {
+				case strings.Contains(pgErr.ConstraintName, "phone"):
+					msg = "phone number already registered"
+				case strings.Contains(pgErr.ConstraintName, "email"):
+					msg = "email already registered"
+				default:
+					msg = "duplicate entry"
+				}
+			} else {
+				log.WithError(err).Error("duplicate key violation")
+			}
+
+			return nil, apperrors.Wrap(err, http.StatusConflict, msg)
 		}
 		log.WithError(err).Error("failed to create user")
 		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to create user")
@@ -294,7 +320,7 @@ func (as *authService) ResendOTP(ctx context.Context, request model.ResendOTPReq
 		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed generated otp")
 	}
 
-	hashOTP := otp.Hash(codeOTP, as.JWTSecret, email)
+	hashOTP := otp.Hash(codeOTP, as.OTPSecret, email)
 
 	pipe := as.Redis.Pipeline()
 	pipe.Set(ctx, keys.OTP, hashOTP, as.OTPTtl)
@@ -307,13 +333,17 @@ func (as *authService) ResendOTP(ctx context.Context, request model.ResendOTPReq
 		return nil, apperrors.Wrap(err, http.StatusBadGateway, "failed to store otp")
 	}
 
-	if err := as.Mail.SendTemplate(ctx, []string{email}, "GoCommerce OTP Verify", "otp_signup.html", mailer.OtpData{
-		Code:    codeOTP,
-		Expired: int(as.OTPTtl.Minutes()),
-	}); err != nil {
-		log.WithError(err).Error("failed to send otp email")
-		return nil, apperrors.Wrap(err, http.StatusBadGateway, "failed to send otp to email")
-	}
+	go func() {
+		mailCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		if err := as.Mail.SendTemplate(mailCtx, []string{email}, "GoCommerce OTP Verify", "otp_signup.html", mailer.OtpData{
+			Code:    codeOTP,
+			Expired: int(as.OTPTtl.Minutes()),
+		}); err != nil {
+			log.WithError(err).Error("failed to send otp email (async)")
+		}
+	}()
 
 	res := model.ResendOTPRes{
 		Email:     email,
@@ -358,17 +388,13 @@ func (as *authService) Login(ctx context.Context, request model.LoginReq) (*mode
 
 func (as *authService) createSession(ctx context.Context, log *logrus.Entry, userID, email, role string, isVerified bool) (*model.TokenPairRes, error) {
 	sessionID := uuid.New().String()
-	tokenPair, err := jwt.GenerateTokenPair(
-		sessionID,
-		userID,
-		email,
-		role,
-		isVerified,
-		as.JWTSecret,
-		as.JWTAccessExpiry,
-		as.JWTRefreshExpiry,
-		as.JWTIssuer,
-	)
+	tokenPair, err := as.Tokenizer.GenerateTokenPair(jwt.UserClaims{
+		SessionID:  sessionID,
+		UserID:     userID,
+		Email:      email,
+		Role:       role,
+		IsVerified: isVerified,
+	})
 	if err != nil {
 		log.WithError(err).Error("failed to generate token")
 		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to generate token")
@@ -376,7 +402,7 @@ func (as *authService) createSession(ctx context.Context, log *logrus.Entry, use
 
 	refreshTokenHash := jwt.HashToken(tokenPair.RefreshToken)
 	sessionKey := fmt.Sprintf("session:%s:%s", userID, sessionID)
-	if err := as.Redis.Set(ctx, sessionKey, refreshTokenHash, as.JWTRefreshExpiry).Err(); err != nil {
+	if err := as.Redis.Set(ctx, sessionKey, refreshTokenHash, as.Tokenizer.RefreshExpiry()).Err(); err != nil {
 		log.WithError(err).Error("failed to store session in redis")
 		return nil, apperrors.Wrap(err, http.StatusBadGateway, "failed to store session")
 	}

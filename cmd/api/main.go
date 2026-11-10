@@ -15,6 +15,7 @@ import (
 	"github.com/mrbayss/Go-Commerce/infrastructure/pkg/mailer"
 	"github.com/mrbayss/Go-Commerce/infrastructure/validation"
 	"github.com/mrbayss/Go-Commerce/internal/controller"
+	"github.com/mrbayss/Go-Commerce/internal/pkg/jwt"
 	"github.com/mrbayss/Go-Commerce/internal/repository"
 	"github.com/mrbayss/Go-Commerce/internal/router"
 	"github.com/mrbayss/Go-Commerce/internal/service"
@@ -30,7 +31,7 @@ func main() {
 	validator := validation.NewValidation()
 	database := datastore.NewDatabase(cfg, log)
 	redisClient := datastore.NewRedis(cfg)
-	mailer := mailer.NewClient(&mailer.SMTPConfig{
+	mailClient, err := mailer.NewClient(&mailer.SMTPConfig{
 		Host:        cfg.SMTP.Host,
 		Port:        cfg.SMTP.Port,
 		Username:    cfg.SMTP.Username,
@@ -40,9 +41,23 @@ func main() {
 		TLSMode:     cfg.SMTP.TLSMode,
 		Timeout:     cfg.SMTP.Timeout,
 	})
+	if err != nil {
+		log.Fatalf("failed to initialize mailer: %v", err)
+	}
 
 	// repository
 	authRepo := repository.NewAuthRepository(database)
+
+	// jwt tokenizer
+	jwtTokenizer, err := jwt.NewTokenizer(jwt.Config{
+		Secret:        cfg.JWT.Secret,
+		Issuer:        cfg.JWT.Issuer,
+		AccessExpiry:  cfg.JWT.AccessExpiry,
+		RefreshExpiry: cfg.JWT.RefreshExpiry,
+	})
+	if err != nil {
+		log.Fatalf("failed to initialize jwt tokenizer: %v", err)
+	}
 
 	// service
 	authService := service.NewAuthService(
@@ -50,13 +65,11 @@ func main() {
 		log,
 		redisClient,
 		validator.Validator,
-		mailer,
+		mailClient,
 		cfg.Auth.OTPTtl,
 		cfg.Auth.MaxResendPerSession,
 		cfg.JWT.Secret,
-		cfg.JWT.AccessExpiry,
-		cfg.JWT.RefreshExpiry,
-		cfg.JWT.Issuer,
+		jwtTokenizer,
 	)
 
 	// controller
