@@ -1,32 +1,31 @@
 # GoCommerce — Progress Log
 
-> Backend e-commerce API dengan Go + Fiber v3 + GORM + PostgreSQL + Redis + SMTP.
-> Arsitektur: Light Clean Architecture (`controller → service → repository → entity`), dengan `infrastructure/` diisolasi.
+> Backend e-commerce API · Go 1.27.1 · Fiber v3.5.0 · GORM · PostgreSQL · Redis · SMTP.
+> Arsitektur: Light Clean Architecture (`controller → service → repository → entity`).
 
 ---
 
 ## Project Info
 
 | Item | Value |
-|------|-------|
+|---|---|
 | Module | `github.com/mrbayss/Go-Commerce` |
-| Go Version | 1.27.1 |
+| Go | 1.27.1 |
 | Fiber | v3.5.0 |
-| GORM | v1.31.2 (PostgreSQL driver v1.6.3) |
-| PostgreSQL driver | pgx v5.10.0 |
+| GORM | v1.31.2 (postgres driver v1.6.3, pgx v5.10.0) |
 | Redis | v9.23.0 (go-redis) |
 | Viper | v1.21.0 |
 | Logrus | v1.10.2 |
 | Validator | v10.30.5 |
-| Mail | wneessen/go-mail v0.8.1 |
-| JWT | golang-jwt/jwt v5.3.1 |
+| go-mail | v0.8.1 |
+| golang-jwt | v5.3.1 |
+| File Go | 23 file, 1.871 baris, **0 test** |
 
-### Konsep kerja
+Konsep kerja: entity **hanya dibuat saat fiturnya dikerjakan**. Setiap fitur = satu slice vertikal,
+status dicatat di tabel di bawah.
 
-Entity **hanya dibuat saat fiturnya dikerjakan**, bukan dikumpulkan di awal.
-Setiap fitur diselesaikan sebagai satu slice vertikal, dan statusnya dicatat di tabel di bawah.
-
-Legenda tahap: **E** entity · **M** migration/AutoMigrate · **R** repository · **S** service · **H** handler · **RT** route · **D** API spec · **T** test
+Legenda tahap: **E** entity · **M** migration/AutoMigrate · **R** repository · **S** service ·
+**H** handler · **RT** route · **D** API spec · **T** test.
 
 ---
 
@@ -34,79 +33,35 @@ Legenda tahap: **E** entity · **M** migration/AutoMigrate · **R** repository �
 
 ```
 GoCommerce/
-├── cmd/api/main.go                      ← entry point + wiring + graceful shutdown
-├── infrastructure/
-│   ├── app/
-│   │   ├── fiber.go                     ← Fiber app, middleware, error handler
-│   │   └── health.go                    ← GET /health (DB + Redis ping)
-│   ├── config/
-│   │   ├── configuration.go             ← typed Config struct
-│   │   └── viper.go                     ← Load() + env overrides
-│   ├── datastore/
-│   │   ├── gorm.go                      ← GORM + AutoMigrate (hanya entity aktif)
-│   │   └── redis.go                     ← Redis client
-│   ├── logger/logrus.go                 ← JSON logger
-│   ├── pkg/mailer/mailer.go             ← SMTP client + embedded templates
-│   └── validation/validator.go          ← custom validator (id_phone, password, notblank)
-├── internal/
-│   ├── controller/auth_controller.go
-│   ├── domain/errors.go                 ← AppError + sentinels
-│   ├── entity/
-│   │   ├── entity.go                    ← BaseModel (UUID PK, timestamps, soft delete)
-│   │   └── user.go                      ← User + UserRole
-│   ├── model/
-│   │   ├── auth_model.go                ← request/response DTO auth
-│   │   └── response/response.go
-│   ├── pkg/
-│   │   ├── jwt/jwt.go                   ← token pair + hashing
-│   │   └── otp/otp.go                   ← OTP generate + HMAC hash
-│   ├── repository/
-│   │   ├── base.go                      ← generic Repository[T]
-│   │   └── auth_repository.go
-│   ├── router/
-│   │   ├── main_router.go               ← /api/v1
-│   │   └── auth_router.go
-│   └── service/auth_service.go
-├── docs/api/spec-api.yaml               ← OpenAPI (baru: Auth)
-├── config.yaml (gitignored) / config.yaml.example
-├── PROGRESS.md
-└── go.mod / go.sum
+├── cmd/api/main.go
+├── internal/{controller,service,repository,entity,model,domain,pkg,router}
+├── infrastructure/{app,config,datastore,logger,validation,pkg/mailer}
+├── docs/{API,ARCHITECTURE,DATABASE}.md + api/spec-api.yaml
+├── config.yaml.example (template)   config.yaml (gitignored)
+└── PROGRESS.md
 ```
+
+Detail: [README.md §Struktur Proyek](./README.md#struktur-proyek).
 
 ---
 
 ## Status Fitur
 
 | Fitur | E | M | R | S | H | RT | D | T | Status |
-|-------|---|---|---|---|---|---|---|---|--------|
+|---|---|---|---|---|---|---|---|---|---|
 | Infrastructure (config, logger, error, health) | – | – | – | – | – | ✓ | – | ✗ | selesai |
-| Auth — SignUp + OTP | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | selesai |
-| Auth — Verify OTP | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | selesai |
-| Auth — Resend OTP | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | selesai |
-| Auth — Login | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | selesai |
+| Auth (SignUp + Verify OTP + Resend OTP + Login) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | selesai |
 | Auth — Refresh token | ✓ | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | belum |
 | Auth — Logout / revoke session | ✓ | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | belum |
 | Auth — JWT middleware + RBAC | – | – | – | – | ✗ | ✗ | ✗ | ✗ | belum |
 | Auth — Forgot/reset password | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | belum |
-| Profile + Address | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | belum |
-| Store | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | belum |
-| Category + Product | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | belum |
-| Cart | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | belum |
-| Order + StoreOrder | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | belum |
-| Payment | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | belum |
-| Shipment | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | belum |
-| Voucher | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | belum |
-| Wallet | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | belum |
-| Campaign / Flash Sale | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | belum |
-| Review | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | belum |
-| Chat | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | belum |
-| Notification | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | belum |
+| Profile + Address, Store, Category + Product, Cart, Order, Payment, Shipment, Voucher, Wallet, Campaign, Review, Chat, Notification | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | belum |
 
 ### Endpoint aktif
 
 | Method | Path | Handler |
-|--------|------|---------|
-| GET | `/health` | `app.HealthCheck` |
+|---|---|---|
+| GET | `/api/v1/health` | `app.HealthCheck` |
 | POST | `/api/v1/auth/signup` | `AuthController.SignUp` |
 | POST | `/api/v1/auth/verify-otp` | `AuthController.VerifyOTP` |
 | POST | `/api/v1/auth/resend-otp` | `AuthController.ResendOTP` |
@@ -117,33 +72,84 @@ GoCommerce/
 ## Keputusan Desain
 
 | Decision | Rationale |
-|----------|-----------|
+|---|---|
 | Light Clean (tanpa use-case layer) | Layer jelas, testable, tanpa over-abstraction |
 | Entity per fitur | Entity yang belum dipakai tidak bisa direview dan jadi "progress palsu" |
 | `infrastructure/` vs `internal/pkg/` | infrastructure = I/O eksternal; `internal/pkg` = utilitas murni (jwt, otp) |
 | Typed `Config` | Type-safe, typo terdeteksi, tidak ada `viper.GetString` di call site |
 | OTP disimpan di Redis | Ephemeral; row user baru dibuat setelah OTP terverifikasi |
-| Rate limit di Redis | Distributed, tahan restart, per-email |
 | Generic `Repository[T]` | CRUD reusable; repo spesifik embed untuk method domain |
 | Manual DI | Constructor injection; pertimbangkan `wire`/`fx` kalau dependency > 10 |
 | AutoMigrate terbatas entity aktif | Mencegah tabel kosong dan schema drift |
 
----
-
-## Known Issues / Technical Debt
-
-1. **`ctx.Value("request_id").(string)`** di `auth_service.go` bisa panic bila key tidak ada — pakai comma-ok assertion dan typed context key.
-2. **AutoMigrate** belum diganti versioned migration (golang-migrate/Atlas) — wajib sebelum production.
-3. **Belum ada test** (unit/service, handler, integration).
-4. **Belum ada JWT middleware, RBAC, refresh/logout** — token dibuat tapi belum bisa dirotasi/dicabut lewat endpoint.
-5. **CORS `*`** masih untuk dev, perlu dibatasi.
-6. **`RepositoryImpl.UpdateIsEnable`** tidak ada di interface `Repository[T]` dan tidak dipakai — kandidat dihapus.
-7. **Belum ada pagination helper** di repository base (hanya `GetAll`).
-8. **Mailer SMTP** memakai `FromAddress` lalu fallback ke `Username` — perlu ditegaskan di config.
-9. **Tidak ada access logger terstruktur** (method, path, status, latency) — baru `requestid`.
-
-> Riwayat desain entity lama (store, product, order, wallet, dll.) disimpan di git tag `wip-domain-sketch` untuk referensi saat fiturnya dikerjakan.
+> **Catatan:** rate limit di Redis **belum diimplementasi** (config dead). Jangan anggap
+> keputusan ini aktif.
 
 ---
 
-*Last updated: 2026-11-13 — pruning entity ke `User` saja + AutoMigrate terbatas entity aktif*
+## Known Issues
+
+Severity: **K** kritis · **H** tinggi · **M** sedang · **L** rendah. Lokasi relatif ke repo root.
+Daftar lengkap tersimpan di `git show HEAD~:docs/SECURITY.md`.
+
+| ID | Severity | Lokasi | Masalah | Fix singkat |
+|---|---|---|---|---|
+| K1 | K | `config.yaml.example:41` | JWT secret placeholder | Rotasi + pisahkan OTP secret |
+| K2 | K | `auth_service.go:364-374` | Timing attack + user enumeration di login | Dummy bcrypt compare |
+| K3 | K | `configuration.go:49-63` | Rate limit signup/login dead config | Implementasi counter Redis |
+| K4 | K | `gorm.go:60-64` | AutoMigrate jalan di production | `auto_migrate: false` di prod |
+| K5 | K | `entity/user.go:16` | `password_hash` NULL → panic | `NOT NULL` + guard `nil` |
+| K6 | K | `go.mod` | 2 CVE reachable + 1 module retracted | `go get` + tidy |
+| H1 | H | `auth_service.go:436` | `ctx.Value("request_id").(string)` tanpa comma-ok → panic | Typed context key |
+| H2 | H | `fiber.go:33` | `context.WithValue` dengan key `string` (SA1029) | Typed key `ctxKey string` |
+| H3 | H | `fiber.go:40-43` | CORS wildcard `*` | Whitelist origin per env |
+| H4 | H | `fiber.go:23-29` | Fiber tanpa BodyLimit/timeout | Set timeout |
+| M1 | M | `base.go:63-73` | `GetAll` tanpa pagination → OOM | Tambah `LIMIT`/cursor |
+| L3 | L | `auth_service.go:204-206` | TTL `signup:attempts` hanya saat counter == 1 → yatim | `INCR` + `EXPIRE` dalam pipeline |
+
+Tambahan: H5, H6, H7, H9–H16, M2–M10, L1–L2, L4–L12 (semua di `git show HEAD~:docs/SECURITY.md`).
+
+---
+
+## Backlog & Open Questions
+
+### Backlog teknis (prioritas tinggi)
+
+- **P0** Refresh token + rotasi
+- **P1** Logout / revoke session + blacklist
+- **P2** JWT middleware + RBAC
+- **P2** Forgot/reset password
+- **P1** Versioned migration (Atlas) + `auto_migrate: false` di prod
+- **P0** Test P0 (`internal/pkg/{jwt,otp}`, `internal/domain`), lalu P1–P4
+- **P2** Port interface Redis/Mailer ke `internal/service/ports.go`
+- **P2** Perbaikan DSN, typed context key, bcrypt 72-byte, dummy compare
+
+### Open Questions (dari PRD, belum diputuskan)
+- Payment gateway mana? (Stripe/Midtrans/Xendit?)
+- Model split order & refund (1 order, 3 toko?)
+- Siapa penanggung pajak (seller/platform) & PPh?
+- Cara verifikasi seller (badge/dokumen)?
+- Kategori produk & skema price?
+- Cache strategy katalog (cache-aside + invalidation)?
+- Seberapa penting timezone & format waktu?
+- Whitelist origin CORS di semua environment?
+- Redis (OTP & session) shared antar node/cluster/persistent?
+- Webhook harus di-signature (HMAC) & di-resend?
+
+---
+
+## Known Drift vs spec-api.yaml
+
+Ringkas: lihat [docs/API.md §8](./docs/API.md#8-drift-vs-spec-apiyaml) (13 item).
+
+---
+
+> Riwayat desain entity lama (store, product, order, wallet, dll.) disimpan di git tag
+> `wip-domain-sketch` untuk referensi saat fiturnya dikerjakan.
+
+*Last updated: 2026-11-16 — konsolidasi dokumen + simplify tables (Status Fitur & Known Issues).*
+
+**Simpanan:** 
+- Status Fitur ringkas (gabung Auth)
+- Known Issues ringkas
+- Backlog diurutkan prioritas (P0/P1/P2)
