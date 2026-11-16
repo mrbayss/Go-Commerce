@@ -32,10 +32,11 @@ Tidak ada field `code` numerik di body. HTTP status adalah satu-satunya diskrimi
 | POST | `/api/v1/auth/verify-otp` | `AuthController.VerifyOTP` | publik | 200 | 400, 409, 429, 500, 502 |
 | POST | `/api/v1/auth/resend-otp` | `AuthController.ResendOTP` | publik | 200 | 400, 422, 429, 500, 502 |
 | POST | `/api/v1/auth/login` | `AuthController.Login` | publik | 200 | 400, 403, 422, 500, 502 |
+| POST | `/api/v1/auth/refresh` | `AuthController.RefreshToken` | publik | 200 | 400, 401, 422, 500, 502 |
 
 Registrasi route: `internal/router/auth_router.go`. Route health didaftarkan langsung di `cmd/api/main.go`.
 
-**Belum ada:** refresh-token, logout/revoke, RBAC, `me`, forgot/reset password, pagination. Backlog lengkap: [../PROGRESS.md](../PROGRESS.md#backlog--open-questions).
+**Belum ada:** logout/revoke, RBAC, `me`, forgot/reset password, pagination. Backlog lengkap: [../PROGRESS.md](../PROGRESS.md#backlog--open-questions).
 
 ---
 

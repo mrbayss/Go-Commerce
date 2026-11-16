@@ -51,7 +51,7 @@ Detail: [README.md §Struktur Proyek](./README.md#struktur-proyek).
 |---|---|---|---|---|---|---|---|---|---|
 | Infrastructure (config, logger, error, health) | – | – | – | – | – | ✓ | – | ✗ | selesai |
 | Auth (SignUp + Verify OTP + Resend OTP + Login) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | selesai |
-| Auth — Refresh token | ✓ | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | belum |
+| Auth — Refresh token | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | selesai |
 | Auth — Logout / revoke session | ✓ | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | belum |
 | Auth — JWT middleware + RBAC | – | – | – | – | ✗ | ✗ | ✗ | ✗ | belum |
 | Auth — Forgot/reset password | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | belum |
@@ -66,6 +66,7 @@ Detail: [README.md §Struktur Proyek](./README.md#struktur-proyek).
 | POST | `/api/v1/auth/verify-otp` | `AuthController.VerifyOTP` |
 | POST | `/api/v1/auth/resend-otp` | `AuthController.ResendOTP` |
 | POST | `/api/v1/auth/login` | `AuthController.Login` |
+| POST | `/api/v1/auth/refresh` | `AuthController.RefreshToken` |
 
 ---
 

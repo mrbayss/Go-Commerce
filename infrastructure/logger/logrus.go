@@ -17,6 +17,7 @@ func NewLogger(cfg *config.Config) *logrus.Logger {
 	log.SetLevel(level)
 	log.SetOutput(os.Stdout)
 	log.SetFormatter(&logrus.JSONFormatter{
+		PrettyPrint:     true,
 		TimestampFormat: "2006-01-02T15:04:05.000Z07:00",
 	})
 	return log

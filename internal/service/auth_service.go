@@ -30,6 +30,7 @@ type AuthService interface {
 	VerifyOTP(ctx context.Context, request model.VerifyOTP) (*model.TokenPairRes, error)
 	ResendOTP(ctx context.Context, request model.ResendOTPReq) (*model.ResendOTPRes, error)
 	Login(ctx context.Context, request model.LoginReq) (*model.TokenPairRes, error)
+	RefreshToken(ctx context.Context, request model.RefreshTokenReq) (*model.TokenPairRes, error)
 }
 
 type authService struct {
@@ -381,6 +382,66 @@ func (as *authService) Login(ctx context.Context, request model.LoginReq) (*mode
 	}
 	if !user.IsVerified {
 		return nil, apperrors.Wrap(nil, http.StatusForbidden, "account is not verified")
+	}
+
+	return as.createSession(ctx, log, user.ID.String(), user.Email, string(user.Role), user.IsVerified)
+}
+
+func (as *authService) RefreshToken(ctx context.Context, request model.RefreshTokenReq) (*model.TokenPairRes, error) {
+	log := as.Log.WithFields(logrus.Fields{
+		"request_id": ctx.Value("request_id"),
+		"function":   "RefreshToken",
+	})
+
+	if err := as.Validation.Struct(request); err != nil {
+		log.WithError(err).Error("validation failed")
+		return nil, err
+	}
+
+	claims, err := as.Tokenizer.ValidateRefreshToken(request.RefreshToken)
+	if err != nil {
+		if errors.Is(err, jwt.ErrExpiredToken) {
+			log.Warn("refresh token expired")
+			return nil, apperrors.Wrap(nil, http.StatusUnauthorized, "refresh token expired")
+		}
+		log.Warn("invalid refresh token")
+		return nil, apperrors.Wrap(nil, http.StatusUnauthorized, "invalid refresh token")
+	}
+
+	// Verifikasi ulang user dari DB — jangan percaya pada claims yang mungkin sudah usang.
+	user, err := as.AuthRepo.GetByID(ctx, claims.UserID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Warn("user not found")
+			return nil, apperrors.Wrap(nil, http.StatusUnauthorized, "user not found")
+		}
+		log.WithError(err).Error("failed to lookup user")
+		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to lookup user")
+	}
+	if !user.IsActive {
+		log.Warn("account is inactive")
+		return nil, apperrors.Wrap(nil, http.StatusForbidden, "account is inactive")
+	}
+	if !user.IsVerified {
+		log.Warn("account is not verified")
+		return nil, apperrors.Wrap(nil, http.StatusForbidden, "account is not verified")
+	}
+
+	sessionKey := fmt.Sprintf("session:%s:%s", claims.UserID, claims.SessionID)
+	storedHash, err := as.Redis.GetDel(ctx, sessionKey).Result()
+	if err == redis.Nil {
+		log.Warn("session not found or expired")
+		return nil, apperrors.Wrap(nil, http.StatusUnauthorized, "session not found or expired")
+	}
+	if err != nil {
+		log.WithError(err).Error("failed to consume session from redis")
+		return nil, apperrors.Wrap(err, http.StatusBadGateway, "failed to verify session")
+	}
+
+	refreshTokenHash := jwt.HashToken(request.RefreshToken)
+	if refreshTokenHash != storedHash {
+		log.Warn("refresh token hash mismatch - possible token reuse or theft")
+		return nil, apperrors.Wrap(nil, http.StatusUnauthorized, "invalid refresh token")
 	}
 
 	return as.createSession(ctx, log, user.ID.String(), user.Email, string(user.Role), user.IsVerified)

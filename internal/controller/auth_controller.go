@@ -72,3 +72,17 @@ func (ac *AuthController) Login(c fiber.Ctx) error {
 
 	return response.SuccessResponse(c, "success login", res)
 }
+
+func (ac *AuthController) RefreshToken(c fiber.Ctx) error {
+	var request model.RefreshTokenReq
+	if err := c.Bind().Body(&request); err != nil {
+		return err
+	}
+
+	res, err := ac.AuthService.RefreshToken(c, request)
+	if err != nil {
+		return err
+	}
+
+	return response.SuccessResponse(c, "token refreshed successfully", res)
+}
