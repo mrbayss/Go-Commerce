@@ -86,3 +86,16 @@ func (ac *AuthController) RefreshToken(c fiber.Ctx) error {
 
 	return response.SuccessResponse(c, "token refreshed successfully", res)
 }
+
+func (ac *AuthController) Logout(c fiber.Ctx) error {
+	var request model.LogoutReq
+	if err := c.Bind().Body(&request); err != nil {
+		return err
+	}
+
+	if err := ac.AuthService.Logout(c, request); err != nil {
+		return err
+	}
+
+	return response.SuccessResponse(c, "logout successful", nil)
+}

@@ -33,10 +33,11 @@ Tidak ada field `code` numerik di body. HTTP status adalah satu-satunya diskrimi
 | POST | `/api/v1/auth/resend-otp` | `AuthController.ResendOTP` | publik | 200 | 400, 422, 429, 500, 502 |
 | POST | `/api/v1/auth/login` | `AuthController.Login` | publik | 200 | 400, 403, 422, 500, 502 |
 | POST | `/api/v1/auth/refresh` | `AuthController.RefreshToken` | publik | 200 | 400, 401, 422, 500, 502 |
+| POST | `/api/v1/auth/logout` | `AuthController.Logout` | publik | 200 | 400, 401, 422, 502 |
 
 Registrasi route: `internal/router/auth_router.go`. Route health didaftarkan langsung di `cmd/api/main.go`.
 
-**Belum ada:** logout/revoke, RBAC, `me`, forgot/reset password, pagination. Backlog lengkap: [../PROGRESS.md](../PROGRESS.md#backlog--open-questions).
+**Belum ada:** RBAC, `me`, forgot/reset password, pagination. Backlog lengkap: [../PROGRESS.md](../PROGRESS.md#backlog--open-questions).
 
 ---
 
@@ -154,6 +155,28 @@ Response: `{ "status": "ok", "components": { "database": "ok", "redis": "ok" } }
 - Timeout 2 s via `context.Background()` (bukan request context).
 - Shape tidak mengikuti envelope standar.
 
+### 4.6 POST /api/v1/auth/logout
+
+Revoke session (hapus key `session:<userID>:<sessionID>` dari Redis) berdasarkan `refresh_token` yang dikirim client.
+
+| Field | Tipe | Wajib | Validasi |
+|---|---|---|---|
+| `refresh_token` | string | ya | `required,max=2048` |
+
+Response: `{ "success": true, "message": "logout successful", "data": null }`
+
+| HTTP | Pesan | Pemicu |
+|---|---|---|
+| 200 | `logout successful` | session dihapus atau sudah tidak ada (idempotent) |
+| 401 | `invalid refresh token` | token salah format, salah tipe, atau signature tidak cocok |
+| 401 | `refresh token expired` | token sudah melewati waktu kedaluwarsa |
+| 422 | `validation failed` | input tidak valid |
+| 502 | `failed to revoke session` | Redis error saat `DEL` |
+
+**Efek samping:** key `session:<userID>:<sessionID>` dihapus dari Redis. Jika key sudah tidak ada (sudah expired atau sudah logout sebelumnya), tetap mengembalikan 200 (idempotent).
+
+**Catatan:** access token masih berlaku sampai TTL habis (tidak ada blacklist access token). Logout hanya membatalkan refresh token sehingga tidak bisa digunakan untuk mintakan access token baru.
+
 ---
 
 ## 5. JWT
@@ -168,7 +191,7 @@ Response: `{ "status": "ok", "components": { "database": "ok", "redis": "ok" } }
 | Refresh TTL | `jwt.refresh_expiry` (168 h) |
 | Issuer | `jwt.issuer` (`gocommerce`), opsional |
 
-Access token **stateless**. Refresh token disimpan sebagai SHA-256 hex di `session:<userID>:<sessionID>`. Tidak ada blacklist, tidak ada revoke.
+Access token **stateless**. Refresh token disimpan sebagai SHA-256 hex di `session:<userID>:<sessionID>`. Session dapat direvoke via `POST /api/v1/auth/logout` (hapus key Redis). Tidak ada blacklist access token — access token berlaku sampai TTL habis.
 
 ---
 
@@ -183,8 +206,9 @@ Access token **stateless**. Refresh token disimpan sebagai SHA-256 hex di `sessi
 | `ResendOTPRes` | email, expired_at | response |
 | `LoginReq` | email, password | request |
 | `TokenPairRes` | access_token, refresh_token, token_type, expires_in | response |
+| `LogoutReq` | refresh_token | request |
 
-Semua di `internal/model/auth_model.go`. `VerifyOTP` tidak memakai suffix `Req` seperti DTO lain.
+Semua di `internal/model/auth_model.go`. `VerifyOTP` tidak memakai suffix `Req` seperti DTO lain. Logout tidak memiliki response struct — cukup envelope message.
 
 Envelope: `internal/model/response/response.go`
 
@@ -206,7 +230,7 @@ curl -s -X POST http://localhost:8080/api/v1/auth/login -H 'Content-Type: applic
   -d '{"email":"budi@example.com","password":"RahasiaKuat1!"}'
 ```
 
-Logout belum tersedia — token berlaku sampai TTL habis.
+Logout tersedia: `POST /api/v1/auth/logout` (lihat §4.6).
 
 ---
 

@@ -319,6 +319,66 @@ paths:
                     success: false
                     message: "failed to send otp to email"
 
+  /api/v1/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout / revoke session
+      description: >-
+        Revokes the refresh token session stored in Redis. Client must send a
+        valid refresh token. On success, the Redis key
+        `session:<userID>:<sessionID>` is deleted. Logout is idempotent: if the
+        session already does not exist, response is still 200. Access token
+        remains valid until its TTL expires (no access-token blacklist).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LogoutReq"
+            example:
+              refresh_token: "eyJhbGciOiJIUzI1NiIs..."
+      responses:
+        "200":
+          description: Logout successful
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/StandardResponse"
+              example:
+                success: true
+                message: "logout successful"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: Invalid or expired refresh token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
+              examples:
+                expired:
+                  value:
+                    success: false
+                    message: "refresh token expired"
+                invalid:
+                  value:
+                    success: false
+                    message: "invalid refresh token"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "502":
+          description: Redis failure
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandardResponse"
+              example:
+                success: false
+                message: "failed to revoke session"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
 components:
   schemas:
     StandardResponse:
@@ -415,6 +475,13 @@ components:
         expired_at:
           type: string
           format: date-time
+    LogoutReq:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token:
+          type: string
+          maxLength: 2048
     HealthResponse:
       type: object
       properties:

@@ -52,7 +52,7 @@ Detail: [README.md §Struktur Proyek](./README.md#struktur-proyek).
 | Infrastructure (config, logger, error, health) | – | – | – | – | – | ✓ | – | ✗ | selesai |
 | Auth (SignUp + Verify OTP + Resend OTP + Login) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | selesai |
 | Auth — Refresh token | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | selesai |
-| Auth — Logout / revoke session | ✓ | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | belum |
+| Auth — Logout / revoke session | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | selesai (kodim, belum test) |
 | Auth — JWT middleware + RBAC | – | – | – | – | ✗ | ✗ | ✗ | ✗ | belum |
 | Auth — Forgot/reset password | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | belum |
 | Profile + Address, Store, Category + Product, Cart, Order, Payment, Shipment, Voucher, Wallet, Campaign, Review, Chat, Notification | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | belum |
