@@ -31,7 +31,7 @@ type AuthService interface {
 	ResendOTP(ctx context.Context, request model.ResendOTPReq) (*model.ResendOTPRes, error)
 	Login(ctx context.Context, request model.LoginReq) (*model.TokenPairRes, error)
 	RefreshToken(ctx context.Context, request model.RefreshTokenReq) (*model.TokenPairRes, error)
-	Logout(ctx context.Context, request model.LogoutReq) error
+	Logout(ctx context.Context, userID uuid.UUID, sessionID string) error
 }
 
 type authService struct {
@@ -449,26 +449,17 @@ func (as *authService) RefreshToken(ctx context.Context, request model.RefreshTo
 	return as.createSession(ctx, log, user.ID.String(), user.Email, string(user.Role), user.IsVerified)
 }
 
-func (as *authService) Logout(ctx context.Context, request model.LogoutReq) error {
+func (as *authService) Logout(ctx context.Context, userID uuid.UUID, sessionID string) error {
 	log := as.Log.WithFields(logrus.Fields{
 		"request_id": ctx.Value("request_id"),
 		"function":   "Logout",
+		"user_id":    userID.String(),
+		"session_id": sessionID,
 	})
 
-	claims, err := as.Tokenizer.ValidateRefreshToken(request.RefreshToken)
-	if err != nil {
-		if errors.Is(err, jwt.ErrExpiredToken) {
-			log.Warn("refresh token expired")
-			return apperrors.Wrap(nil, http.StatusUnauthorized, "refresh token expired")
-		}
-		log.Warn("invalid refresh token")
-		return apperrors.Wrap(nil, http.StatusUnauthorized, "invalid refresh token")
-	}
-
-	sessionKey := fmt.Sprintf("session:%s:%s", claims.UserID, claims.SessionID)
+	sessionKey := fmt.Sprintf("session:%s:%s", userID.String(), sessionID)
 	if err := as.Redis.Del(ctx, sessionKey).Err(); err != nil {
-		log.WithError(err).Error("failed to delete session from redis")
-		return apperrors.Wrap(err, http.StatusBadGateway, "failed to revoke session")
+		log.WithError(err).Warn("failed to delete session from redis, session will expire automatically")
 	}
 
 	return nil

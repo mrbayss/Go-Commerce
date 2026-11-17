@@ -44,7 +44,3 @@ type LoginReq struct {
 type RefreshTokenReq struct {
 	RefreshToken string `json:"refresh_token" validate:"required,max=2048"`
 }
-
-type LogoutReq struct {
-	RefreshToken string `json:"refresh_token" validate:"required,max=2048"`
-}

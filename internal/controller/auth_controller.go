@@ -1,7 +1,12 @@
 package controller
 
 import (
+	"net/http"
+
 	"github.com/gofiber/fiber/v3"
+	"github.com/google/uuid"
+	apperrors "github.com/mrbayss/Go-Commerce/internal/domain"
+	"github.com/mrbayss/Go-Commerce/internal/middleware"
 	"github.com/mrbayss/Go-Commerce/internal/model"
 	"github.com/mrbayss/Go-Commerce/internal/model/response"
 	"github.com/mrbayss/Go-Commerce/internal/service"
@@ -88,12 +93,17 @@ func (ac *AuthController) RefreshToken(c fiber.Ctx) error {
 }
 
 func (ac *AuthController) Logout(c fiber.Ctx) error {
-	var request model.LogoutReq
-	if err := c.Bind().Body(&request); err != nil {
-		return err
+	claims, ok := middleware.AuthClaimsFrom(c.Context())
+	if !ok {
+		return &apperrors.AppError{Code: http.StatusUnauthorized, Message: "unauthorized"}
 	}
 
-	if err := ac.AuthService.Logout(c, request); err != nil {
+	userID, err := uuid.Parse(claims.UserID)
+	if err != nil {
+		return &apperrors.AppError{Code: http.StatusUnauthorized, Message: "invalid user identity"}
+	}
+
+	if err := ac.AuthService.Logout(c.Context(), userID, claims.SessionID); err != nil {
 		return err
 	}
 
