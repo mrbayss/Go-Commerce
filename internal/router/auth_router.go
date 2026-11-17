@@ -12,8 +12,8 @@ func SetupAuthRoutes(api fiber.Router, ac *controller.AuthController, requireAut
 	auth.Post("/verify-otp", ac.VerifyOTP)
 	auth.Post("/resend-otp", ac.ResendOTP)
 	auth.Post("/login", ac.Login)
+	auth.Post("/refresh", ac.RefreshToken)
 
-	// Auth Middleware protected auth flow
-	auth.Post("/refresh", requireAuth, ac.RefreshToken)
+	// Auth Middleware protected auth flow.
 	auth.Post("/logout", requireAuth, ac.Logout)
 }

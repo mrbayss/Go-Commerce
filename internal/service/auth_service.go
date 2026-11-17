@@ -82,7 +82,8 @@ func NewAuthService(
 }
 
 func (as *authService) SignUp(ctx context.Context, request model.SignUpReq) (*model.SignUpRes, error) {
-	log, email := as.getLoggerAndEmail(ctx, "SignUp", request.Email)
+	email := strings.ToLower(strings.TrimSpace(request.Email))
+	log := as.logger(ctx, "SignUp").WithField("email", email)
 
 	if err := as.Validation.Struct(request); err != nil {
 		log.WithError(err).Error("validation failed")
@@ -178,7 +179,8 @@ func (as *authService) SignUp(ctx context.Context, request model.SignUpReq) (*mo
 }
 
 func (as *authService) VerifyOTP(ctx context.Context, request model.VerifyOTP) (*model.TokenPairRes, error) {
-	log, email := as.getLoggerAndEmail(ctx, "VerifyOTP", request.Email)
+	email := strings.ToLower(strings.TrimSpace(request.Email))
+	log := as.logger(ctx, "VerifyOTP").WithField("email", email)
 
 	if err := as.Validation.Struct(request); err != nil {
 		log.WithError(err).Error("validation failed")
@@ -286,7 +288,8 @@ func (as *authService) VerifyOTP(ctx context.Context, request model.VerifyOTP) (
 }
 
 func (as *authService) ResendOTP(ctx context.Context, request model.ResendOTPReq) (*model.ResendOTPRes, error) {
-	log, email := as.getLoggerAndEmail(ctx, "ResendOTP", request.Email)
+	email := strings.ToLower(strings.TrimSpace(request.Email))
+	log := as.logger(ctx, "ResendOTP").WithField("email", email)
 
 	if err := as.Validation.Struct(request); err != nil {
 		log.WithError(err).Error("validation failed")
@@ -356,7 +359,8 @@ func (as *authService) ResendOTP(ctx context.Context, request model.ResendOTPReq
 }
 
 func (as *authService) Login(ctx context.Context, request model.LoginReq) (*model.TokenPairRes, error) {
-	log, email := as.getLoggerAndEmail(ctx, "Login", request.Email)
+	email := strings.ToLower(strings.TrimSpace(request.Email))
+	log := as.logger(ctx, "Login").WithField("email", email)
 
 	if err := as.Validation.Struct(request); err != nil {
 		log.WithError(err).Error("validation failed")
@@ -389,10 +393,7 @@ func (as *authService) Login(ctx context.Context, request model.LoginReq) (*mode
 }
 
 func (as *authService) RefreshToken(ctx context.Context, request model.RefreshTokenReq) (*model.TokenPairRes, error) {
-	log := as.Log.WithFields(logrus.Fields{
-		"request_id": ctx.Value("request_id"),
-		"function":   "RefreshToken",
-	})
+	log := as.logger(ctx, "RefreshToken")
 
 	if err := as.Validation.Struct(request); err != nil {
 		log.WithError(err).Error("validation failed")
@@ -409,6 +410,23 @@ func (as *authService) RefreshToken(ctx context.Context, request model.RefreshTo
 		return nil, apperrors.Wrap(nil, http.StatusUnauthorized, "invalid refresh token")
 	}
 
+	oldSessionKey := fmt.Sprintf("session:%s:%s", claims.UserID, claims.SessionID)
+	storedHash, err := as.Redis.Get(ctx, oldSessionKey).Result()
+	if err == redis.Nil {
+		log.Warn("session not found or expired")
+		return nil, apperrors.Wrap(nil, http.StatusUnauthorized, "session not found or expired")
+	}
+	if err != nil {
+		log.WithError(err).Error("failed to query session from redis")
+		return nil, apperrors.Wrap(err, http.StatusBadGateway, "failed to verify session")
+	}
+
+	refreshTokenHash := jwt.HashToken(request.RefreshToken)
+	if refreshTokenHash != storedHash {
+		log.Warn("refresh token hash mismatch - possible token reuse or theft")
+		return nil, apperrors.Wrap(nil, http.StatusUnauthorized, "invalid refresh token")
+	}
+
 	user, err := as.AuthRepo.GetByID(ctx, claims.UserID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -419,40 +437,25 @@ func (as *authService) RefreshToken(ctx context.Context, request model.RefreshTo
 		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to lookup user")
 	}
 
-	if !user.IsActive {
-		log.Warn("account is inactive")
-		return nil, apperrors.Wrap(nil, http.StatusForbidden, "account is inactive")
+	if !user.IsActive || !user.IsVerified {
+		log.Warn("account is inactive or unverified")
+		return nil, apperrors.Wrap(nil, http.StatusForbidden, "account is not active or verified")
 	}
 
-	if !user.IsVerified {
-		log.Warn("account is not verified")
-		return nil, apperrors.Wrap(nil, http.StatusForbidden, "account is not verified")
-	}
-
-	sessionKey := fmt.Sprintf("session:%s:%s", claims.UserID, claims.SessionID)
-	storedHash, err := as.Redis.GetDel(ctx, sessionKey).Result()
-	if err == redis.Nil {
-		log.Warn("session not found or expired")
-		return nil, apperrors.Wrap(nil, http.StatusUnauthorized, "session not found or expired")
-	}
+	tokenPair, err := as.createSession(ctx, log, user.ID.String(), user.Email, string(user.Role), user.IsVerified)
 	if err != nil {
-		log.WithError(err).Error("failed to consume session from redis")
-		return nil, apperrors.Wrap(err, http.StatusBadGateway, "failed to verify session")
+		return nil, err
 	}
 
-	refreshTokenHash := jwt.HashToken(request.RefreshToken)
-	if refreshTokenHash != storedHash {
-		log.Warn("refresh token hash mismatch - possible token reuse or theft")
-		return nil, apperrors.Wrap(nil, http.StatusUnauthorized, "invalid refresh token")
+	if err := as.Redis.Del(ctx, oldSessionKey).Err(); err != nil {
+		log.WithError(err).Warn("failed to delete old session from redis, it will expire automatically")
 	}
 
-	return as.createSession(ctx, log, user.ID.String(), user.Email, string(user.Role), user.IsVerified)
+	return tokenPair, nil
 }
 
 func (as *authService) Logout(ctx context.Context, userID uuid.UUID, sessionID string) error {
-	log := as.Log.WithFields(logrus.Fields{
-		"request_id": ctx.Value("request_id"),
-		"function":   "Logout",
+	log := as.logger(ctx, "Logout").WithFields(logrus.Fields{
 		"user_id":    userID.String(),
 		"session_id": sessionID,
 	})
@@ -510,12 +513,10 @@ func signupKeysFor(email string) signupKeys {
 	}
 }
 
-func (as *authService) getLoggerAndEmail(ctx context.Context, functionName string, email string) (*logrus.Entry, string) {
-	email = strings.ToLower(strings.TrimSpace(email))
-	reqID := ctx.Value("request_id").(string)
+func (as *authService) logger(ctx context.Context, functionName string) *logrus.Entry {
+	reqID, _ := ctx.Value("request_id").(string)
 	return as.Log.WithFields(logrus.Fields{
 		"request_id": reqID,
 		"function":   functionName,
-		"email":      email,
-	}), email
+	})
 }
