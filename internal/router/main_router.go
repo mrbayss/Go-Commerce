@@ -5,7 +5,7 @@ import (
 	"github.com/mrbayss/Go-Commerce/internal/controller"
 )
 
-func SetupRoutes(app *fiber.App, authController *controller.AuthController) {
+func SetupRoutes(app *fiber.App, authController *controller.AuthController, requireAuth fiber.Handler) {
 	apiV1 := app.Group("/api/v1")
-	SetupAuthRoutes(apiV1, authController)
+	SetupAuthRoutes(apiV1, authController, requireAuth)
 }

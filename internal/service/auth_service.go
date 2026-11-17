@@ -409,7 +409,6 @@ func (as *authService) RefreshToken(ctx context.Context, request model.RefreshTo
 		return nil, apperrors.Wrap(nil, http.StatusUnauthorized, "invalid refresh token")
 	}
 
-	// Verifikasi ulang user dari DB — jangan percaya pada claims yang mungkin sudah usang.
 	user, err := as.AuthRepo.GetByID(ctx, claims.UserID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -419,10 +418,12 @@ func (as *authService) RefreshToken(ctx context.Context, request model.RefreshTo
 		log.WithError(err).Error("failed to lookup user")
 		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to lookup user")
 	}
+
 	if !user.IsActive {
 		log.Warn("account is inactive")
 		return nil, apperrors.Wrap(nil, http.StatusForbidden, "account is inactive")
 	}
+
 	if !user.IsVerified {
 		log.Warn("account is not verified")
 		return nil, apperrors.Wrap(nil, http.StatusForbidden, "account is not verified")
@@ -479,7 +480,7 @@ func (as *authService) createSession(ctx context.Context, log *logrus.Entry, use
 		SessionID:  sessionID,
 		UserID:     userID,
 		Email:      email,
-		Role:       role,
+		Role:       strings.ToLower(role),
 		IsVerified: isVerified,
 	})
 	if err != nil {

@@ -15,6 +15,7 @@ import (
 	"github.com/mrbayss/Go-Commerce/infrastructure/pkg/mailer"
 	"github.com/mrbayss/Go-Commerce/infrastructure/validation"
 	"github.com/mrbayss/Go-Commerce/internal/controller"
+	"github.com/mrbayss/Go-Commerce/internal/middleware"
 	"github.com/mrbayss/Go-Commerce/internal/pkg/jwt"
 	"github.com/mrbayss/Go-Commerce/internal/repository"
 	"github.com/mrbayss/Go-Commerce/internal/router"
@@ -45,9 +46,6 @@ func main() {
 		log.Fatalf("failed to initialize mailer: %v", err)
 	}
 
-	// repository
-	authRepo := repository.NewAuthRepository(database)
-
 	// jwt tokenizer
 	jwtTokenizer, err := jwt.NewTokenizer(jwt.Config{
 		Secret:        cfg.JWT.Secret,
@@ -58,6 +56,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to initialize jwt tokenizer: %v", err)
 	}
+
+	// repository
+	authRepo := repository.NewAuthRepository(database)
 
 	// service
 	authService := service.NewAuthService(
@@ -78,10 +79,14 @@ func main() {
 	// HTTP server
 	appInstance := app.NewFiber(cfg, log, validator)
 
+	// HTTP middleware guards
+	authMiddleware := middleware.RequireAuth(jwtTokenizer)
+
 	//router
 	router.SetupRoutes(
 		appInstance,
 		authController,
+		authMiddleware,
 	)
 
 	// health check

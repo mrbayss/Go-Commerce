@@ -7,27 +7,17 @@
 [![Redis](https://img.shields.io/badge/Redis-v9-DC382D?logo=redis&logoColor=white)](https://redis.io/)
 [![Status](https://img.shields.io/badge/status-alpha-yellow)](./PROGRESS.md)
 
-> Backend API e-commerce **multi-vendor**, Go + Fiber v3. Status: **alpha** — slice autentikasi selesai,
-> fitur lain masih backlog.
-
----
+> Backend API e-commerce **multi-vendor** (Go + Fiber v3). Status: **alpha** — slice autentikasi dasar sudah ada, domain lain masih backlog.
 
 ## Deskripsi
 
-GoCommerce adalah backend API e-commerce multi-vendor (pola Shopee/Tokopedia) untuk pasar Indonesia.
-Dibangun dengan Go + Fiber v3 di atas PostgreSQL, Redis, dan SMTP, dengan arsitektur *Light Clean
-Architecture* (`controller → service → repository → entity`). Saat ini hanya slice autentikasi yang
-selesai; seluruh domain e-commerce lainnya masih backlog.
+GoCommerce adalah backend API e-commerce multi-vendor (pola Shopee/Tokopedia). Dibangun dengan Go + Fiber v3 di atas PostgreSQL, Redis, dan SMTP, dengan alur umum `controller → service → repository → entity`.
 
----
+## Status singkat
 
-## Status
-
-- **Alpha.** Tabel aktif: `users` saja. 23 file Go, 1.871 baris, **0 test**.
-- Auth: signup → OTP email → verify-otp → token pair → login. Belum ada refresh/logout/RBAC.
-- Status fitur, known issues, backlog: [PROGRESS.md](./PROGRESS.md).
-
----
+- **Auth:** signup → verify OTP → resend OTP → login → refresh token → logout/revoke session.
+- **Middleware:** JWT stateless + RBAC dasar (`RequireAuth`/`RequireRoles`) sudah ada, belum dipasang ke endpoint domain.
+- **Domain lain:** belum dikerjakan (lihat [PROGRESS.md](./PROGRESS.md)).
 
 ## Tech Stack
 
@@ -44,24 +34,12 @@ selesai; seluruh domain e-commerce lainnya masih backlog.
 | go-mail | v0.8.1 |
 | golang-jwt | v5.3.1 |
 
----
-
-## Arsitektur (ringkas)
-
-Dependency satu arah: `cmd/api → internal → infrastructure`. Entity dibuat per fitur (bukan
-dikumpulkan di awal). Detail layer map, request flow 4 endpoint, error handler, dan 7 ADR:
-[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md).
-
----
-
 ## Prasyarat
 
 - Go 1.27.1+
 - PostgreSQL 13+ (database `gocommerce`)
 - Redis 6+
 - Akun SMTP (untuk kirim OTP)
-
----
 
 ## Quick Start
 
@@ -72,7 +50,7 @@ cd Go-Commerce
 
 # 2. Buat config dari template (jangan commit)
 cp config.yaml.example config.yaml
-# edit: postgres.pass, jwt.secret (>=32 byte), smtp.*
+# edit: postgres.pass, jwt.secret (>=32 byte), smtp.*, auth.otp_secret
 
 # 3. Buat database
 psql -U postgres -c "CREATE DATABASE gocommerce;"
@@ -82,31 +60,25 @@ go run ./cmd/api
 # server di http://localhost:8080
 ```
 
-Env override: Viper mengganti `.` → `_` (mis. `POSTGRES_PASS`, `JWT_SECRET`). Kunci config lengkap:
-[`config.yaml.example`](./config.yaml.example).
-
----
+Env override: Viper mengganti `.` → `_` (mis. `POSTGRES_PASS`, `JWT_SECRET`). Kunci config lengkap: [`config.yaml.example`](./config.yaml.example).
 
 ## Endpoint (ringkas)
 
-| Method | Path | Auth |
-|---|---|---|
-| GET | `/api/v1/health` | publik |
-| POST | `/api/v1/auth/signup` | publik |
-| POST | `/api/v1/auth/verify-otp` | publik |
-| POST | `/api/v1/auth/resend-otp` | publik |
-| POST | `/api/v1/auth/login` | publik |
-
-Semua endpoint publik (belum ada middleware JWT). Detail body/DTO/error/alur e2e:
-[docs/API.md](./docs/API.md).
-
----
+| Method | Path |
+|---|---|
+| GET | `/api/v1/health` |
+| POST | `/api/v1/auth/signup` |
+| POST | `/api/v1/auth/verify-otp` |
+| POST | `/api/v1/auth/resend-otp` |
+| POST | `/api/v1/auth/login` |
+| POST | `/api/v1/auth/refresh` |
+| POST | `/api/v1/auth/logout` |
 
 ## Struktur Proyek
 
 ```
 GoCommerce/
-├── cmd/api/                 # composition root
+├── cmd/api/                 # entrypoint & wiring
 ├── internal/
 │   ├── controller/          # HTTP handler
 │   ├── service/             # logika bisnis
@@ -114,6 +86,7 @@ GoCommerce/
 │   ├── entity/              # model domain
 │   ├── model/               # DTO + response envelope
 │   ├── domain/              # AppError + sentinel
+│   ├── middleware/          # guard (auth/RBAC)
 │   ├── pkg/{jwt,otp}        # utilitas murni
 │   └── router/              # registrasi route
 ├── infrastructure/
@@ -122,87 +95,31 @@ GoCommerce/
 │   ├── datastore/           # GORM & Redis client
 │   ├── pkg/mailer/          # SMTP + template
 │   └── {logger,validation}/
-├── docs/                    # API, ARCHITECTURE, DATABASE, spec OpenAPI
 ├── config.yaml.example
 └── PROGRESS.md
 ```
 
----
-
-## Konfigurasi
-
-Semua key konfigurasi ada di [`config.yaml.example`](./config.yaml.example) — satu sumber.
-Key wajib diisi: `postgres.pass`, `jwt.secret` (>=32 byte), `smtp.password`, `auth.otp_secret`.
-
-Tabel config **tidak** diduplikasi di sini (hindari drift).
-
----
-
-## Perintah Pengembangan
+## Perintah pengembangan (opsional)
 
 ```bash
-gofmt -l .            # harus kosong
-go build ./...         # harus sukses
-go vet ./...           # harus bersih
-go test ./... -race    # harus lulus
-go mod tidy            # jangan ubah go.mod/go.sum di CI
-govulncheck ./...      # tidak boleh ada CVE reachable
+gofmt -w .
+go build ./...
+go vet ./...
+go test ./... -race
 ```
-
-Detail workflow, troubleshooting, tier test: [AGENTS.md](./AGENTS.md).
-
----
-
-## Database
-
-- Tabel aktif: `users` (partial unique index `email`/`phone`, soft delete).
-- Skema dibuat via `AutoMigrate` saat boot (wajib `false` di production).
-- Redis: state store OTP/session. Key & temuan: [docs/DATABASE.md](./docs/DATABASE.md).
-
----
-
-## Keamanan (ringkas)
-
-- Password di-hash bcrypt cost 10; OTP crypto/rand + HMAC-SHA256 + constant-time compare.
-- **Celah aktif:** JWT secret placeholder, rate limit mati, CORS wildcard, tidak ada logout,
-  `ctx.Value` tanpa comma-ok, 2 CVE reachable, module retracted. Daftar lengkap:
-  [PROGRESS.md](./PROGRESS.md#known-issues).
-- Credential bocor di config lokal (DB pass, SMTP app-password) — **rotate manual** bila repo
-  tersebar; `config.yaml` tidak pernah ter-commit.
-
----
-
-## Roadmap
-
-Belum dikerjakan (lihat [PROGRESS.md](./PROGRESS.md#backlog--open-questions)):
-refresh token, logout/revoke, RBAC, `me`, forgot/reset password, store, product, cart, order,
-payment, shipment, voucher, wallet, review, chat, campaign, notification; versioned migration;
-test P0–P4.
-
----
 
 ## Dokumentasi
 
 | Dokumen | Isi |
 |---|---|
-| [AGENTS.md](./AGENTS.md) | Kontrak kerja, layering, konvensi, verifikasi, vertical slice |
-| [docs/API.md](./docs/API.md) | Endpoint, DTO, error, JWT, alur e2e, drift vs spec |
-| [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) | Layer map, request flow, error handler, ADR-001..007 |
-| [docs/DATABASE.md](./docs/DATABASE.md) | Skema `users`, Redis key, query, migrasi, retensi |
-| [docs/api/spec-api.yaml](./docs/api/spec-api.yaml) | Kontrak OpenAPI 3.1 |
-| [PROGRESS.md](./PROGRESS.md) | Status fitur, known issues, backlog, open questions |
+| [AGENTS.md](./AGENTS.md) | Panduan ringkas untuk agent/kontributor |
+| [PROGRESS.md](./PROGRESS.md) | Status fitur & arah berikutnya |
 
-Desain domain e-commerce lama disimpan di git tag `wip-domain-sketch` (lihat ADR-007).
+## Catatan
 
----
-
-## Kontribusi
-
-Ikuti [AGENTS.md](./AGENTS.md): Conventional Commits, scope = area repo, PR checklist §9.
-Jangan commit `config.yaml`. Jangan tambah dependency tanpa alasan kuat.
-
----
+- `config.yaml` berisi data sensitif lokal — jangan di-commit.
+- Kode adalah sumber kebenaran; dokumen bisa tertinggal dari implementasi.
 
 ## License
 
-Belum ada LICENSE. Tambahkan sebelum rilis publik.
+Belum ada LICENSE.
