@@ -16,7 +16,7 @@ GoCommerce adalah backend API e-commerce multi-vendor (pola Shopee/Tokopedia). D
 ## Status singkat
 
 - **Auth:** signup → verify OTP → resend OTP → login → refresh token → logout/revoke session.
-- **Middleware:** JWT stateless + RBAC dasar (`RequireAuth`/`RequireRoles`) sudah ada, belum dipasang ke endpoint domain.
+- **Middleware:** JWT stateless + RBAC dasar (`RequireAuth` sudah aktif di logout; endpoint domain belum ada).
 - **Domain lain:** belum dikerjakan (lihat [PROGRESS.md](./PROGRESS.md)).
 
 ## Tech Stack
@@ -50,7 +50,7 @@ cd Go-Commerce
 
 # 2. Buat config dari template (jangan commit)
 cp config.yaml.example config.yaml
-# edit: postgres.pass, jwt.secret (>=32 byte), smtp.*, auth.otp_secret
+# edit: postgres.pass, jwt.secret (>=32 byte), smtp.*
 
 # 3. Buat database
 psql -U postgres -c "CREATE DATABASE gocommerce;"
@@ -64,15 +64,15 @@ Env override: Viper mengganti `.` → `_` (mis. `POSTGRES_PASS`, `JWT_SECRET`). 
 
 ## Endpoint (ringkas)
 
-| Method | Path |
-|---|---|
-| GET | `/api/v1/health` |
-| POST | `/api/v1/auth/signup` |
-| POST | `/api/v1/auth/verify-otp` |
-| POST | `/api/v1/auth/resend-otp` |
-| POST | `/api/v1/auth/login` |
-| POST | `/api/v1/auth/refresh` |
-| POST | `/api/v1/auth/logout` |
+| Method | Path | Auth |
+|---|---|---|
+| GET | `/api/v1/health` | Public |
+| POST | `/api/v1/auth/signup` | Public |
+| POST | `/api/v1/auth/verify-otp` | Public |
+| POST | `/api/v1/auth/resend-otp` | Public |
+| POST | `/api/v1/auth/login` | Public |
+| POST | `/api/v1/auth/refresh` | Public |
+| POST | `/api/v1/auth/logout` | Bearer Token |
 
 ## Struktur Proyek
 
