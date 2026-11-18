@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -16,6 +15,7 @@ import (
 	apperrors "github.com/mrbayss/Go-Commerce/internal/domain"
 	"github.com/mrbayss/Go-Commerce/internal/entity"
 	"github.com/mrbayss/Go-Commerce/internal/model"
+	"github.com/mrbayss/Go-Commerce/internal/pkg/cache"
 	"github.com/mrbayss/Go-Commerce/internal/pkg/jwt"
 	"github.com/mrbayss/Go-Commerce/internal/pkg/otp"
 	"github.com/mrbayss/Go-Commerce/internal/repository"
@@ -143,12 +143,6 @@ func (as *authService) SignUp(ctx context.Context, request model.SignUpReq) (*mo
 		Phone:        phone,
 	}
 
-	pendingBytes, err := json.Marshal(pending)
-	if err != nil {
-		log.WithError(err).Error("failed to marshal pending signup")
-		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to store signup session")
-	}
-
 	codeOTP, err := otp.Generate()
 	if err != nil {
 		log.WithError(err).Error("failed to generate otp")
@@ -157,7 +151,7 @@ func (as *authService) SignUp(ctx context.Context, request model.SignUpReq) (*mo
 
 	hashOTP := otp.Hash(codeOTP, as.OTPSecret, email)
 
-	if err := as.Redis.Set(ctx, keys.Pending, string(pendingBytes), as.OTPTtl).Err(); err != nil {
+	if err := cache.Set(ctx, as.Redis, keys.Pending, pending, as.OTPTtl); err != nil {
 		log.WithError(err).Error("failed to store pending signup in redis")
 		return nil, apperrors.Wrap(err, http.StatusBadGateway, "failed to store signup session")
 	}
@@ -238,20 +232,14 @@ func (as *authService) VerifyOTP(ctx context.Context, request model.VerifyOTP) (
 		return nil, apperrors.Wrap(err, http.StatusBadGateway, "failed to verify otp")
 	}
 
-	pendingData, err := as.Redis.Get(ctx, keys.Pending).Result()
-	if err == redis.Nil {
+	pending, err := cache.Get[signupPending](ctx, as.Redis, keys.Pending)
+	if errors.Is(err, cache.ErrNotFound) {
 		log.Error("pending signup expired or not found")
 		return nil, apperrors.Wrap(nil, http.StatusBadRequest, "signup session expired")
 	}
 	if err != nil {
-		log.WithError(err).Error("failed to get pending signup from redis")
+		log.WithError(err).Error("failed to get pending signup from cache")
 		return nil, apperrors.Wrap(err, http.StatusBadGateway, "failed to verify otp")
-	}
-
-	var pending signupPending
-	if err := json.Unmarshal([]byte(pendingData), &pending); err != nil {
-		log.WithError(err).Error("failed to unmarshal pending signup")
-		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to process signup")
 	}
 
 	user := &entity.User{
@@ -262,7 +250,6 @@ func (as *authService) VerifyOTP(ctx context.Context, request model.VerifyOTP) (
 		Phone:        pending.Phone,
 		Role:         entity.UserRoleBuyer,
 		IsActive:     true,
-		IsVerified:   true,
 	}
 
 	User, err := as.AuthRepo.Create(ctx, user)
@@ -294,7 +281,7 @@ func (as *authService) VerifyOTP(ctx context.Context, request model.VerifyOTP) (
 
 	_ = as.Redis.Del(ctx, keys.Pending, keys.OTP, keys.Attempts, keys.ResendCount).Err()
 
-	return as.createSession(ctx, log, User.ID.String(), User.Email, string(User.Role), User.IsVerified)
+	return as.createSession(ctx, log, User.ID.String(), User.Email, string(User.Role))
 }
 
 func (as *authService) ResendOTP(ctx context.Context, request model.ResendOTPReq) (*model.ResendOTPRes, error) {
@@ -395,11 +382,8 @@ func (as *authService) Login(ctx context.Context, request model.LoginReq) (*mode
 	if !user.IsActive {
 		return nil, apperrors.Wrap(nil, http.StatusForbidden, "account is inactive")
 	}
-	if !user.IsVerified {
-		return nil, apperrors.Wrap(nil, http.StatusForbidden, "account is not verified")
-	}
 
-	return as.createSession(ctx, log, user.ID.String(), user.Email, string(user.Role), user.IsVerified)
+	return as.createSession(ctx, log, user.ID.String(), user.Email, string(user.Role))
 }
 
 func (as *authService) RefreshToken(ctx context.Context, request model.RefreshTokenReq) (*model.TokenPairRes, error) {
@@ -447,12 +431,12 @@ func (as *authService) RefreshToken(ctx context.Context, request model.RefreshTo
 		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to lookup user")
 	}
 
-	if !user.IsActive || !user.IsVerified {
-		log.Warn("account is inactive or unverified")
-		return nil, apperrors.Wrap(nil, http.StatusForbidden, "account is not active or verified")
+	if !user.IsActive {
+		log.Warn("account is inactive")
+		return nil, apperrors.Wrap(nil, http.StatusForbidden, "account is inactive")
 	}
 
-	tokenPair, err := as.createSession(ctx, log, user.ID.String(), user.Email, string(user.Role), user.IsVerified)
+	tokenPair, err := as.createSession(ctx, log, user.ID.String(), user.Email, string(user.Role))
 	if err != nil {
 		return nil, err
 	}
@@ -490,14 +474,13 @@ func (as *authService) Logout(ctx context.Context, userID uuid.UUID, sessionID s
 	return nil
 }
 
-func (as *authService) createSession(ctx context.Context, log *logrus.Entry, userID, email, role string, isVerified bool) (*model.TokenPairRes, error) {
+func (as *authService) createSession(ctx context.Context, log *logrus.Entry, userID, email, role string) (*model.TokenPairRes, error) {
 	sessionID := uuid.New().String()
 	tokenPair, err := as.Tokenizer.GenerateTokenPair(jwt.UserClaims{
-		SessionID:  sessionID,
-		UserID:     userID,
-		Email:      email,
-		Role:       strings.ToLower(role),
-		IsVerified: isVerified,
+		SessionID: sessionID,
+		UserID:    userID,
+		Email:     email,
+		Role:      strings.ToLower(role),
 	})
 	if err != nil {
 		log.WithError(err).Error("failed to generate token")

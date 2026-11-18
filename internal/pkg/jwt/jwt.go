@@ -29,22 +29,20 @@ type Config struct {
 }
 
 type UserClaims struct {
-	SessionID  string
-	UserID     string
-	Email      string
-	Role       string
-	IsVerified bool
+	SessionID string
+	UserID    string
+	Email     string
+	Role      string
 }
 
 type NumericDate = jwt.NumericDate
 
 type Claims struct {
-	UserID     string `json:"user_id,omitempty"`
-	Email      string `json:"email,omitempty"`
-	Role       string `json:"role,omitempty"`
-	IsVerified bool   `json:"is_verified,omitempty"`
-	SessionID  string `json:"session_id,omitempty"`
-	TokenType  string `json:"token_type"`
+	UserID    string `json:"user_id,omitempty"`
+	Email     string `json:"email,omitempty"`
+	Role      string `json:"role,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	TokenType string `json:"token_type"`
 	jwt.RegisteredClaims
 }
 
@@ -101,12 +99,11 @@ func (t *tokenizer) GenerateTokenPair(payload UserClaims) (*TokenPair, error) {
 	now := time.Now()
 
 	accessClaims := Claims{
-		UserID:     payload.UserID,
-		Email:      payload.Email,
-		Role:       payload.Role,
-		IsVerified: payload.IsVerified,
-		SessionID:  payload.SessionID,
-		TokenType:  TokenTypeAccess,
+		UserID:    payload.UserID,
+		Email:     payload.Email,
+		Role:      payload.Role,
+		SessionID: payload.SessionID,
+		TokenType: TokenTypeAccess,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ID:        uuid.New().String(),
 			Subject:   payload.UserID,

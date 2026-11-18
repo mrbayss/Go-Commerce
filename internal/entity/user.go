@@ -19,6 +19,5 @@ type User struct {
 	Phone        *string  `gorm:"type:varchar(20);uniqueIndex:idx_users_phone,where:deleted_at IS NULL"`
 	AvatarURL    *string  `gorm:"type:varchar(500)"`
 	Role         UserRole `gorm:"type:varchar(20);not null;default:'buyer'"`
-	IsActive     bool     `gorm:"not null;default:false"`
-	IsVerified   bool     `gorm:"not null;default:false"`
+	IsActive     bool     `gorm:"not null;default:true"`
 }

@@ -16,7 +16,8 @@ GoCommerce adalah backend API e-commerce multi-vendor (pola Shopee/Tokopedia). D
 ## Status singkat
 
 - **Auth:** signup → verify OTP → resend OTP → login → refresh token → logout/revoke session.
-- **Middleware:** JWT stateless + RBAC dasar (`RequireAuth` sudah aktif di logout; endpoint domain belum ada).
+- **User:** `GET /users/me` untuk mengambil profil user yang sedang login (Bearer Token).
+- **Middleware:** JWT stateless + RBAC dasar (`RequireAuth` aktif di logout dan endpoint user).
 - **Domain lain:** belum dikerjakan (lihat [PROGRESS.md](./PROGRESS.md)).
 
 ## Tech Stack
@@ -73,6 +74,42 @@ Env override: Viper mengganti `.` → `_` (mis. `POSTGRES_PASS`, `JWT_SECRET`). 
 | POST | `/api/v1/auth/login` | Public |
 | POST | `/api/v1/auth/refresh` | Public |
 | POST | `/api/v1/auth/logout` | Bearer Token |
+| GET | `/api/v1/users/me` | Bearer Token |
+
+### `GET /api/v1/users/me`
+
+Mengembalikan profil user yang sedang login. Data profil dibaca dari database (bukan dari claims token) dan di-cache selama 15 menit. Field sensitif seperti `password_hash` tidak pernah dikirim.
+
+```json
+{
+  "success": true,
+  "message": "profile retrieved successfully",
+  "data": {
+    "id": "9f9b1f7e-0d49-4f0e-9cc2-6f2d4f6f0b11",
+    "email": "user@mail.com",
+    "first_name": "Budi",
+    "last_name": "Santoso",
+    "phone": "081234567890",
+    "avatar_url": null,
+    "role": "buyer",
+    "is_active": true,
+    "created_at": "2026-11-18T08:00:00Z",
+    "updated_at": "2026-11-18T08:00:00Z"
+  }
+}
+```
+
+Respons error:
+
+| Status | Penyebab |
+|---|---|
+| 401 | Token absen, invalid, expired, revoked, atau `user_id` di token bukan UUID valid |
+| 403 | Akun tidak aktif (`is_active = false`) |
+| 404 | User tidak ditemukan (mis. sudah dihapus) |
+| 500 | Gagal mengakses database |
+| 502 | Redis gagal diverifikasi saat pengecekan revokasi token |
+
+Status `is_active` juga diperiksa di `login` dan `refresh`: akun nonaktif tidak bisa mendapat token baru. Token access yang sudah terbit tetap berlaku sampai expired (maks. 15 menit).
 
 ## Struktur Proyek
 

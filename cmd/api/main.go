@@ -59,6 +59,7 @@ func main() {
 
 	// repository
 	authRepo := repository.NewAuthRepository(database)
+	userRepo := repository.NewUserRepository(database)
 
 	// service
 	authService := service.NewAuthService(
@@ -72,9 +73,11 @@ func main() {
 		cfg.JWT.Secret,
 		jwtTokenizer,
 	)
+	userService := service.NewUserService(userRepo, log, redisClient)
 
 	// controller
 	authController := controller.NewAuthController(authService)
+	userController := controller.NewUserController(userService)
 
 	// HTTP server
 	appInstance := app.NewFiber(cfg, log, validator)
@@ -86,6 +89,7 @@ func main() {
 	router.SetupRoutes(
 		appInstance,
 		authController,
+		userController,
 		authMiddleware,
 	)
 
