@@ -112,6 +112,17 @@ func (as *authService) SignUp(ctx context.Context, request model.SignUpReq) (*mo
 		}
 	}
 
+	keys := signupKeysFor(email)
+	pendingExists, err := as.Redis.Exists(ctx, keys.Pending).Result()
+	if err != nil {
+		log.WithError(err).Error("failed to check pending signup in redis")
+		return nil, apperrors.Wrap(err, http.StatusBadGateway, "failed to check signup session")
+	}
+	if pendingExists > 0 {
+		log.Warn("pending signup session already exists")
+		return nil, apperrors.Wrap(nil, http.StatusConflict, "registration is already in progress for this email, please verify your OTP")
+	}
+
 	hash, err := bcrypt.GenerateFromPassword([]byte(request.Password), bcrypt.DefaultCost)
 	if err != nil {
 		log.WithError(err).Error("failed to hash password")
@@ -146,7 +157,6 @@ func (as *authService) SignUp(ctx context.Context, request model.SignUpReq) (*mo
 
 	hashOTP := otp.Hash(codeOTP, as.OTPSecret, email)
 
-	keys := signupKeysFor(email)
 	if err := as.Redis.Set(ctx, keys.Pending, string(pendingBytes), as.OTPTtl).Err(); err != nil {
 		log.WithError(err).Error("failed to store pending signup in redis")
 		return nil, apperrors.Wrap(err, http.StatusBadGateway, "failed to store signup session")
