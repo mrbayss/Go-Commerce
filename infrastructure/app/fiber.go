@@ -76,6 +76,10 @@ func errorHandler(log *logrus.Logger) fiber.ErrorHandler {
 		// AppError - general business logic errors
 		var appErr *apperrors.AppError
 		if errors.As(err, &appErr) {
+			if appErr.Err != nil && appErr.Code >= 500 {
+				log.WithError(appErr.Err).WithField("path", c.Path()).Error(appErr.Message)
+			}
+
 			if appErr.Details != nil {
 				return response.ErrorResponseWithDetails(c, appErr.Code, appErr.Message, appErr.Details)
 			}

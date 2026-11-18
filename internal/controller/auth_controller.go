@@ -103,7 +103,7 @@ func (ac *AuthController) Logout(c fiber.Ctx) error {
 		return &apperrors.AppError{Code: http.StatusUnauthorized, Message: "invalid user identity"}
 	}
 
-	if err := ac.AuthService.Logout(c.Context(), userID, claims.SessionID); err != nil {
+	if err := ac.AuthService.Logout(c.Context(), userID, claims.SessionID, claims.ExpiresAt); err != nil {
 		return err
 	}
 

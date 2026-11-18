@@ -36,6 +36,8 @@ type UserClaims struct {
 	IsVerified bool
 }
 
+type NumericDate = jwt.NumericDate
+
 type Claims struct {
 	UserID     string `json:"user_id,omitempty"`
 	Email      string `json:"email,omitempty"`

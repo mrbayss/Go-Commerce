@@ -80,7 +80,7 @@ func main() {
 	appInstance := app.NewFiber(cfg, log, validator)
 
 	// HTTP middleware guards
-	authMiddleware := middleware.RequireAuth(jwtTokenizer)
+	authMiddleware := middleware.RequireAuth(jwtTokenizer, redisClient)
 
 	//router
 	router.SetupRoutes(

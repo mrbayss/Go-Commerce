@@ -1,5 +1,5 @@
-// Package middleware: guard transport-level autentikasi (RequireAuth,
-// stateless) dan RBAC (RequireRoles) — di-wire dari composition root.
+// Package middleware: guard transport-level autentikasi (RequireAuth)
+// dan RBAC (RequireRoles) — di-wire dari composition root.
 package middleware
 
 import (
@@ -11,6 +11,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 	apperrors "github.com/mrbayss/Go-Commerce/internal/domain"
 	"github.com/mrbayss/Go-Commerce/internal/pkg/jwt"
+	"github.com/redis/go-redis/v9"
 )
 
 type authClaimsKey struct{}
@@ -29,10 +30,14 @@ func AuthClaimsFrom(ctx context.Context) (*jwt.Claims, bool) {
 
 type requireAuthMiddleware struct {
 	tokenizer jwt.Tokenizer
+	redis     *redis.Client
 }
 
-func RequireAuth(tokenizer jwt.Tokenizer) fiber.Handler {
-	m := &requireAuthMiddleware{tokenizer: tokenizer}
+func RequireAuth(tokenizer jwt.Tokenizer, redis *redis.Client) fiber.Handler {
+	m := &requireAuthMiddleware{
+		tokenizer: tokenizer,
+		redis:     redis,
+	}
 	return m.handle
 }
 
@@ -48,6 +53,17 @@ func (m *requireAuthMiddleware) handle(c fiber.Ctx) error {
 			return &apperrors.AppError{Code: http.StatusUnauthorized, Message: "access token expired"}
 		}
 		return &apperrors.AppError{Code: http.StatusUnauthorized, Message: "invalid access token"}
+	}
+
+	if m.redis != nil && claims.SessionID != "" {
+		blacklistKey := "blacklist:session:" + claims.SessionID
+		exists, err := m.redis.Exists(c.Context(), blacklistKey).Result()
+		if err != nil {
+			return apperrors.Wrap(err, http.StatusBadGateway, "failed to verify token revocation")
+		}
+		if exists > 0 {
+			return &apperrors.AppError{Code: http.StatusUnauthorized, Message: "token has been revoked"}
+		}
 	}
 
 	ctx := WithAuthClaims(c.Context(), claims)

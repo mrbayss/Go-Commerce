@@ -31,7 +31,7 @@ type AuthService interface {
 	ResendOTP(ctx context.Context, request model.ResendOTPReq) (*model.ResendOTPRes, error)
 	Login(ctx context.Context, request model.LoginReq) (*model.TokenPairRes, error)
 	RefreshToken(ctx context.Context, request model.RefreshTokenReq) (*model.TokenPairRes, error)
-	Logout(ctx context.Context, userID uuid.UUID, sessionID string) error
+	Logout(ctx context.Context, userID uuid.UUID, sessionID string, exp *jwt.NumericDate) error
 }
 
 type authService struct {
@@ -454,15 +454,27 @@ func (as *authService) RefreshToken(ctx context.Context, request model.RefreshTo
 	return tokenPair, nil
 }
 
-func (as *authService) Logout(ctx context.Context, userID uuid.UUID, sessionID string) error {
+func (as *authService) Logout(ctx context.Context, userID uuid.UUID, sessionID string, exp *jwt.NumericDate) error {
 	log := as.logger(ctx, "Logout").WithFields(logrus.Fields{
 		"user_id":    userID.String(),
 		"session_id": sessionID,
 	})
 
 	sessionKey := fmt.Sprintf("session:%s:%s", userID.String(), sessionID)
-	if err := as.Redis.Del(ctx, sessionKey).Err(); err != nil {
-		log.WithError(err).Warn("failed to delete session from redis, session will expire automatically")
+	blacklistKey := fmt.Sprintf("blacklist:session:%s", sessionID)
+
+	pipe := as.Redis.Pipeline()
+	pipe.Del(ctx, sessionKey)
+
+	if exp != nil && sessionID != "" {
+		ttl := time.Until(exp.Time)
+		if ttl > 0 {
+			pipe.Set(ctx, blacklistKey, "revoked", ttl)
+		}
+	}
+
+	if _, err := pipe.Exec(ctx); err != nil {
+		log.WithError(err).Warn("failed to revoke session from redis")
 	}
 
 	return nil
