@@ -16,7 +16,7 @@ GoCommerce adalah backend API e-commerce multi-vendor (pola Shopee/Tokopedia). D
 ## Status singkat
 
 - **Auth:** signup → verify OTP → resend OTP → login → refresh token → logout/revoke session.
-- **User:** `GET /users/me` (baca profil) dan `PATCH /users/me` (ubah nama/telepon) — keduanya Bearer Token.
+- **User:** `GET /users/me` (baca profil), `PATCH /users/me` (ubah nama/telepon), `PUT /users/me/avatar` (upload/ganti foto profil), `DELETE /users/me/avatar` (hapus foto profil) — semuanya Bearer Token. File avatar tersaji publik di `/uploads/avatars/...`.
 - **Middleware:** JWT stateless + RBAC dasar (`RequireAuth` aktif di logout dan endpoint user).
 - **Domain lain:** belum dikerjakan (lihat [PROGRESS.md](./PROGRESS.md)).
 
@@ -76,6 +76,9 @@ Env override: Viper mengganti `.` → `_` (mis. `POSTGRES_PASS`, `JWT_SECRET`). 
 | POST | `/api/v1/auth/logout` | Bearer Token |
 | GET | `/api/v1/users/me` | Bearer Token |
 | PATCH | `/api/v1/users/me` | Bearer Token |
+| PUT | `/api/v1/users/me/avatar` | Bearer Token |
+| DELETE | `/api/v1/users/me/avatar` | Bearer Token |
+| GET | `/uploads/avatars/<file>` | Public (file statis) |
 
 ### `GET /api/v1/users/me`
 
@@ -155,6 +158,57 @@ Respons sukses:
 | 422 | Validasi gagal (nama blank, nama > 100 karakter, format telepon salah, atau tidak ada field dikirim) |
 | 500 | Gagal mengakses database |
 
+### `PUT /api/v1/users/me/avatar`
+
+Upload atau ganti foto profil user yang sedang login. Request `multipart/form-data` dengan satu file di field `avatar`. Batas ukuran 2 MB (config `upload.max_avatar_size`); format diizinkan JPEG, PNG, WebP — divalidasi dari isi file (magic bytes), bukan ekstensi/Content-Type kiriman klien. File disimpan sebagai `storage/uploads/avatars/<uuid>.<ext>` dan `avatar_url` berisi path publik relatif (`/uploads/avatars/<uuid>.<ext>`); file lama otomatis dihapus. Cache profil di-invalidasi sehingga `GET /users/me` langsung menampilkan avatar baru. Respons berupa `UserProfileRes` terbaru (bentuk sama seperti `GET /users/me`).
+
+```bash
+curl -X PUT http://localhost:8080/api/v1/users/me/avatar \
+  -H "Authorization: Bearer <access_token>" \
+  -F "avatar=@foto.jpg"
+```
+
+Respons sukses:
+
+```json
+{
+  "success": true,
+  "message": "avatar updated successfully",
+  "data": {
+    "id": "9f9b1f7e-0d49-4f0e-9cc2-6f2d4f6f0b11",
+    "email": "user@mail.com",
+    "first_name": "Budi",
+    "last_name": "Santoso",
+    "phone": "6281234567890",
+    "avatar_url": "/uploads/avatars/9e4b05bf-0c56-497a-bf96-a7f76e1b16d2.jpg",
+    "role": "buyer",
+    "is_active": true,
+    "created_at": "2026-11-18T08:00:00Z",
+    "updated_at": "2026-11-20T08:00:00Z"
+  }
+}
+```
+
+| Status | Penyebab |
+|---|---|
+| 401 | Token absen, invalid, expired, revoked, atau `user_id` bukan UUID valid |
+| 403 | Akun tidak aktif |
+| 404 | User tidak ditemukan |
+| 413 | Body request melebihi batas Fiber (default 4 MB) |
+| 422 | Field `avatar` absen, file > 2 MB, atau format bukan JPEG/PNG/WebP |
+| 500 | Gagal menyimpan file atau mengakses database |
+
+### `DELETE /api/v1/users/me/avatar`
+
+Menghapus foto profil user yang sedang login: `avatar_url` di-set `null`, file di disk dihapus, dan cache profil di-invalidasi. Respons berupa `UserProfileRes` terbaru dengan `avatar_url: null` (pesan `"avatar deleted successfully"`).
+
+| Status | Penyebab |
+|---|---|
+| 401 | Token absen, invalid, expired, revoked, atau `user_id` bukan UUID valid |
+| 403 | Akun tidak aktif |
+| 404 | User tidak ditemukan, atau user tidak punya avatar (`"avatar not found"`) |
+| 500 | Gagal mengakses database |
+
 ## Struktur Proyek
 
 ```
@@ -168,7 +222,7 @@ GoCommerce/
 │   ├── model/               # DTO + response envelope
 │   ├── domain/              # AppError + sentinel
 │   ├── middleware/          # guard (auth/RBAC)
-│   ├── pkg/{jwt,otp}        # utilitas murni
+│   ├── pkg/{jwt,otp,cache,storage} # utilitas murni
 │   └── router/              # registrasi route
 ├── infrastructure/
 │   ├── app/                 # Fiber app + middleware + error handler
