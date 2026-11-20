@@ -9,11 +9,13 @@ import (
 	"github.com/gofiber/fiber/v3/middleware/cors"
 	"github.com/gofiber/fiber/v3/middleware/recover"
 	"github.com/gofiber/fiber/v3/middleware/requestid"
+	"github.com/gofiber/fiber/v3/middleware/static"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/mrbayss/Go-Commerce/infrastructure/config"
 	"github.com/mrbayss/Go-Commerce/infrastructure/validation"
 	apperrors "github.com/mrbayss/Go-Commerce/internal/domain"
 	"github.com/mrbayss/Go-Commerce/internal/model/response"
+	"github.com/mrbayss/Go-Commerce/internal/pkg/storage"
 	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 )
@@ -41,6 +43,8 @@ func NewFiber(cfg *config.Config, log *logrus.Logger, validate *validation.Fiber
 		AllowMethods: []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"},
 		AllowHeaders: []string{"Origin", "Content-Type", "Accept", "Authorization"},
 	}))
+
+	app.Use(storage.PublicPrefix, static.New(cfg.Upload.Dir))
 
 	return app
 }
