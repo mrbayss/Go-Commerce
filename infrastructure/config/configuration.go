@@ -13,6 +13,7 @@ type Config struct {
 	Auth     AuthConfig     `mapstructure:"auth"`
 	JWT      JWTConfig      `mapstructure:"jwt"`
 	SMTP     SMTPConfig     `mapstructure:"smtp"`
+	Upload   UploadConfig   `mapstructure:"upload"`
 }
 
 type AppConfig struct {
@@ -78,4 +79,9 @@ type JWTConfig struct {
 	AccessExpiry  time.Duration `mapstructure:"access_expiry"`
 	RefreshExpiry time.Duration `mapstructure:"refresh_expiry"`
 	Issuer        string        `mapstructure:"issuer"`
+}
+
+type UploadConfig struct {
+	Dir           string `mapstructure:"dir"`
+	MaxAvatarSize int64  `mapstructure:"max_avatar_size"`
 }

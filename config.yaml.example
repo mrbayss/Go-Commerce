@@ -52,3 +52,7 @@ smtp:
   from_name: "GoCommerce"
   tls_mode: "STARTTLS"
   timeout: "10s"
+
+upload:
+  dir: "./storage/uploads"
+  max_avatar_size: 2097152 # 2 MB, bytes
