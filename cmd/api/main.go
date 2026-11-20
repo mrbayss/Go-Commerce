@@ -73,7 +73,7 @@ func main() {
 		cfg.JWT.Secret,
 		jwtTokenizer,
 	)
-	userService := service.NewUserService(userRepo, log, redisClient, validator.Validator)
+	userService := service.NewUserService(userRepo, log, redisClient, validator.Validator, cfg.Upload.Dir, cfg.Upload.MaxAvatarSize)
 
 	// controller
 	authController := controller.NewAuthController(authService)

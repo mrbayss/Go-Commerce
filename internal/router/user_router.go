@@ -9,4 +9,6 @@ func SetupUserRoutes(api fiber.Router, uc *controller.UserController, requireAut
 	users := api.Group("/users")
 	users.Get("/me", requireAuth, uc.GetMe)
 	users.Patch("/me", requireAuth, uc.UpdateMe)
+	users.Put("/me/avatar", requireAuth, uc.UpdateAvatar)
+	users.Delete("/me/avatar", requireAuth, uc.DeleteAvatar)
 }

@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
+	"mime/multipart"
 	"net/http"
 	"strings"
 	"time"
@@ -13,6 +15,7 @@ import (
 	"github.com/mrbayss/Go-Commerce/internal/entity"
 	"github.com/mrbayss/Go-Commerce/internal/model"
 	"github.com/mrbayss/Go-Commerce/internal/pkg/cache"
+	"github.com/mrbayss/Go-Commerce/internal/pkg/storage"
 	"github.com/mrbayss/Go-Commerce/internal/repository"
 	"github.com/redis/go-redis/v9"
 	"github.com/sirupsen/logrus"
@@ -24,13 +27,17 @@ const profileCacheTTL = 15 * time.Minute
 type UserService interface {
 	GetProfile(ctx context.Context, userID uuid.UUID) (*model.UserProfileRes, error)
 	UpdateProfile(ctx context.Context, userID uuid.UUID, request model.UpdateProfileReq) (*model.UserProfileRes, error)
+	UpdateAvatar(ctx context.Context, userID uuid.UUID, file *multipart.FileHeader) (*model.UserProfileRes, error)
+	DeleteAvatar(ctx context.Context, userID uuid.UUID) (*model.UserProfileRes, error)
 }
 
 type userService struct {
-	UserRepo   repository.UserRepository
-	Log        *logrus.Logger
-	Redis      *redis.Client
-	Validation *validator.Validate
+	UserRepo      repository.UserRepository
+	Log           *logrus.Logger
+	Redis         *redis.Client
+	Validation    *validator.Validate
+	UploadDir     string
+	MaxAvatarSize int64
 }
 
 func NewUserService(
@@ -38,12 +45,16 @@ func NewUserService(
 	log *logrus.Logger,
 	redis *redis.Client,
 	validation *validator.Validate,
+	uploadDir string,
+	maxAvatarSize int64,
 ) UserService {
 	return &userService{
-		UserRepo:   userRepo,
-		Log:        log,
-		Redis:      redis,
-		Validation: validation,
+		UserRepo:      userRepo,
+		Log:           log,
+		Redis:         redis,
+		Validation:    validation,
+		UploadDir:     uploadDir,
+		MaxAvatarSize: maxAvatarSize,
 	}
 }
 
@@ -131,6 +142,83 @@ func (us *userService) UpdateProfile(ctx context.Context, userID uuid.UUID, requ
 	us.deleteProfileCache(ctx, log, userID)
 	log.Info("user profile updated")
 	return profileResponse(user), nil
+}
+
+func (us *userService) UpdateAvatar(ctx context.Context, userID uuid.UUID, file *multipart.FileHeader) (*model.UserProfileRes, error) {
+	log := us.logger(ctx, "UpdateAvatar").WithField("user_id", userID.String())
+
+	if file.Size > us.MaxAvatarSize {
+		return nil, apperrors.Wrap(nil, http.StatusUnprocessableEntity,
+			fmt.Sprintf("avatar exceeds maximum size of %d MB", us.MaxAvatarSize/(1024*1024)))
+	}
+
+	user, err := us.getActiveUser(ctx, log, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	publicPath, err := storage.SaveUpload(file, us.UploadDir, "avatars", storage.MIMEJPEG, storage.MIMEPNG, storage.MIMEWebP)
+	if err != nil {
+		if errors.Is(err, storage.ErrUnsupportedType) {
+			return nil, apperrors.Wrap(nil, http.StatusUnprocessableEntity, "unsupported avatar format (allowed: JPEG, PNG, WebP)")
+		}
+		log.WithError(err).Error("failed to save avatar file")
+		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to save avatar")
+	}
+
+	if err := us.UserRepo.UpdateFields(ctx, userID, map[string]any{"avatar_url": publicPath}); err != nil {
+		if rmErr := storage.Remove(storage.DiskPath(us.UploadDir, publicPath)); rmErr != nil {
+			log.WithError(rmErr).Warn("failed to remove orphaned avatar file")
+		}
+		log.WithError(err).Error("failed to update user avatar")
+		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to update avatar")
+	}
+
+	if user.AvatarURL != nil {
+		if err := storage.Remove(storage.DiskPath(us.UploadDir, *user.AvatarURL)); err != nil {
+			log.WithError(err).Warn("failed to remove previous avatar file")
+		}
+	}
+
+	updated, err := us.getActiveUser(ctx, log, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	us.deleteProfileCache(ctx, log, userID)
+	log.Info("user avatar updated")
+	return profileResponse(updated), nil
+}
+
+func (us *userService) DeleteAvatar(ctx context.Context, userID uuid.UUID) (*model.UserProfileRes, error) {
+	log := us.logger(ctx, "DeleteAvatar").WithField("user_id", userID.String())
+
+	user, err := us.getActiveUser(ctx, log, userID)
+	if err != nil {
+		return nil, err
+	}
+	if user.AvatarURL == nil {
+		log.Warn("user has no avatar")
+		return nil, apperrors.Wrap(nil, http.StatusNotFound, "avatar not found")
+	}
+
+	if err := us.UserRepo.UpdateFields(ctx, userID, map[string]any{"avatar_url": nil}); err != nil {
+		log.WithError(err).Error("failed to delete user avatar")
+		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to delete avatar")
+	}
+
+	if err := storage.Remove(storage.DiskPath(us.UploadDir, *user.AvatarURL)); err != nil {
+		log.WithError(err).Warn("failed to remove avatar file")
+	}
+
+	updated, err := us.getActiveUser(ctx, log, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	us.deleteProfileCache(ctx, log, userID)
+	log.Info("user avatar deleted")
+	return profileResponse(updated), nil
 }
 
 // getActiveUser fetches the user and enforces the active-account check.
