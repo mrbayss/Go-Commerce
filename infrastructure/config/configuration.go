@@ -14,6 +14,8 @@ type Config struct {
 	JWT      JWTConfig      `mapstructure:"jwt"`
 	SMTP     SMTPConfig     `mapstructure:"smtp"`
 	Upload   UploadConfig   `mapstructure:"upload"`
+	Store    StoreConfig    `mapstructure:"store"`
+	Product  ProductConfig  `mapstructure:"product"`
 }
 
 type AppConfig struct {
@@ -84,4 +86,15 @@ type JWTConfig struct {
 type UploadConfig struct {
 	Dir           string `mapstructure:"dir"`
 	MaxAvatarSize int64  `mapstructure:"max_avatar_size"`
+}
+
+type StoreConfig struct {
+	CommissionRate float64 `mapstructure:"commission_rate"`
+	MaxLogoSize    int64   `mapstructure:"max_logo_size"`
+	MaxBannerSize  int64   `mapstructure:"max_banner_size"`
+}
+
+type ProductConfig struct {
+	MaxImageSize        int64 `mapstructure:"max_image_size"`
+	MaxImagesPerProduct int   `mapstructure:"max_images_per_product"`
 }

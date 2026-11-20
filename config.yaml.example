@@ -1,6 +1,7 @@
 app:
   name: "GoCommerce"
   port: "8080"
+  environment: "development"
 
 postgres:
   host: "localhost"
@@ -56,3 +57,12 @@ smtp:
 upload:
   dir: "./storage/uploads"
   max_avatar_size: 2097152 # 2 MB, bytes
+
+store:
+  commission_rate: 5.00    # percent, decimal(5,2)
+  max_logo_size: 1048576   # 1 MB, bytes
+  max_banner_size: 2097152 # 2 MB, bytes
+
+product:
+  max_image_size: 3145728  # 3 MB, bytes
+  max_images_per_product: 10

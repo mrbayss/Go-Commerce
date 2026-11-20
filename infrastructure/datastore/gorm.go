@@ -14,7 +14,14 @@ import (
 // AutoMigrate migrates schemas for features that are already implemented.
 // Add an entity here only when its feature is actually being built.
 func AutoMigrate(db *gorm.DB) error {
-	return db.AutoMigrate(&entity.User{})
+	return db.AutoMigrate(
+		&entity.User{},
+		&entity.Store{},
+		&entity.Category{},
+		&entity.Product{},
+		&entity.ProductVariant{},
+		&entity.ProductImage{},
+	)
 }
 
 // NewDatabase creates a new GORM database connection and configures the connection pool.

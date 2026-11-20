@@ -99,10 +99,21 @@ func errorHandler(log *logrus.Logger) fiber.ErrorHandler {
 			msg := "duplicate entry"
 			var pgErr *pgconn.PgError
 			if errors.As(err, &pgErr) {
-				if pgErr.ConstraintName == "idx_users_email" {
+				switch pgErr.ConstraintName {
+				case "idx_users_email":
 					msg = "email already registered"
-				} else if pgErr.ConstraintName == "idx_users_phone" {
+				case "idx_users_phone":
 					msg = "phone number already registered"
+				case "idx_stores_slug":
+					msg = "store slug already taken"
+				case "idx_stores_user_id":
+					msg = "you already have a store"
+				case "idx_categories_slug":
+					msg = "category slug already taken"
+				case "idx_products_slug":
+					msg = "product slug already taken"
+				case "idx_product_variants_store_sku":
+					msg = "SKU already used in this store"
 				}
 			}
 			return response.ErrorResponse(c, fiber.StatusConflict, msg)
