@@ -118,6 +118,72 @@ func (sc *StoreController) Reject(c fiber.Ctx) error {
 	return response.SuccessResponse(c, "store rejected successfully", res)
 }
 
+func (sc *StoreController) UpdateLogo(c fiber.Ctx) error {
+	userID, _, err := middleware.AuthIdentity(c)
+	if err != nil {
+		return err
+	}
+
+	file, err := c.FormFile("logo")
+	if err != nil {
+		return apperrors.Wrap(nil, http.StatusUnprocessableEntity, "logo file is required")
+	}
+
+	res, err := sc.StoreService.UpdateLogo(c.Context(), userID, file)
+	if err != nil {
+		return err
+	}
+
+	return response.SuccessResponse(c, "logo updated successfully", res)
+}
+
+func (sc *StoreController) DeleteLogo(c fiber.Ctx) error {
+	userID, _, err := middleware.AuthIdentity(c)
+	if err != nil {
+		return err
+	}
+
+	res, err := sc.StoreService.DeleteLogo(c.Context(), userID)
+	if err != nil {
+		return err
+	}
+
+	return response.SuccessResponse(c, "logo deleted successfully", res)
+}
+
+func (sc *StoreController) UpdateBanner(c fiber.Ctx) error {
+	userID, _, err := middleware.AuthIdentity(c)
+	if err != nil {
+		return err
+	}
+
+	file, err := c.FormFile("banner")
+	if err != nil {
+		return apperrors.Wrap(nil, http.StatusUnprocessableEntity, "banner file is required")
+	}
+
+	res, err := sc.StoreService.UpdateBanner(c.Context(), userID, file)
+	if err != nil {
+		return err
+	}
+
+	return response.SuccessResponse(c, "banner updated successfully", res)
+}
+
+func (sc *StoreController) DeleteBanner(c fiber.Ctx) error {
+	userID, _, err := middleware.AuthIdentity(c)
+	if err != nil {
+		return err
+	}
+
+	res, err := sc.StoreService.DeleteBanner(c.Context(), userID)
+	if err != nil {
+		return err
+	}
+
+	return response.SuccessResponse(c, "banner deleted successfully", res)
+}
+
 func parseStoreID(c fiber.Ctx) (uuid.UUID, error) {
 	storeID, err := uuid.Parse(c.Params("id"))
 	if err != nil {

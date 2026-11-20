@@ -76,7 +76,7 @@ func main() {
 		jwtTokenizer,
 	)
 	userService := service.NewUserService(userRepo, log, redisClient, validator.Validator, cfg.Upload.Dir, cfg.Upload.MaxAvatarSize)
-	storeService := service.NewStoreService(storeRepo, userRepo, log, validator.Validator, cfg.Store.CommissionRate)
+	storeService := service.NewStoreService(storeRepo, userRepo, log, validator.Validator, cfg.Store.CommissionRate, cfg.Upload.Dir, cfg.Store.MaxLogoSize, cfg.Store.MaxBannerSize)
 
 	// controller
 	authController := controller.NewAuthController(authService)

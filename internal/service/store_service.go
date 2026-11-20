@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
+	"mime/multipart"
 	"net/http"
 	"strings"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/mrbayss/Go-Commerce/internal/entity"
 	"github.com/mrbayss/Go-Commerce/internal/model"
 	"github.com/mrbayss/Go-Commerce/internal/pkg/slug"
+	"github.com/mrbayss/Go-Commerce/internal/pkg/storage"
 	"github.com/mrbayss/Go-Commerce/internal/repository"
 	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
@@ -24,6 +27,10 @@ type StoreService interface {
 	List(ctx context.Context, status string, page, limit int) ([]model.StoreRes, int64, error)
 	Approve(ctx context.Context, storeID uuid.UUID) (*model.StoreRes, error)
 	Reject(ctx context.Context, storeID uuid.UUID) (*model.StoreRes, error)
+	UpdateLogo(ctx context.Context, userID uuid.UUID, file *multipart.FileHeader) (*model.StoreRes, error)
+	DeleteLogo(ctx context.Context, userID uuid.UUID) (*model.StoreRes, error)
+	UpdateBanner(ctx context.Context, userID uuid.UUID, file *multipart.FileHeader) (*model.StoreRes, error)
+	DeleteBanner(ctx context.Context, userID uuid.UUID) (*model.StoreRes, error)
 }
 
 type storeService struct {
@@ -32,6 +39,9 @@ type storeService struct {
 	Log            *logrus.Logger
 	Validation     *validator.Validate
 	CommissionRate float64
+	UploadDir      string
+	MaxLogoSize    int64
+	MaxBannerSize  int64
 }
 
 func NewStoreService(
@@ -40,6 +50,9 @@ func NewStoreService(
 	log *logrus.Logger,
 	validation *validator.Validate,
 	commissionRate float64,
+	uploadDir string,
+	maxLogoSize int64,
+	maxBannerSize int64,
 ) StoreService {
 	return &storeService{
 		StoreRepo:      storeRepo,
@@ -47,6 +60,9 @@ func NewStoreService(
 		Log:            log,
 		Validation:     validation,
 		CommissionRate: commissionRate,
+		UploadDir:      uploadDir,
+		MaxLogoSize:    maxLogoSize,
+		MaxBannerSize:  maxBannerSize,
 	}
 }
 
@@ -251,6 +267,120 @@ func (ss *storeService) Reject(ctx context.Context, storeID uuid.UUID) (*model.S
 
 	log.Info("store rejected")
 	return storeResponse(updated), nil
+}
+
+// UpdateLogo stores a new store logo. The pending-store check is skipped on
+// purpose: a seller may brand the store before admin approval.
+func (ss *storeService) UpdateLogo(ctx context.Context, userID uuid.UUID, file *multipart.FileHeader) (*model.StoreRes, error) {
+	return ss.updateStoreImage(ctx, userID, file, "logo_url", ss.MaxLogoSize, "UpdateLogo", "logo")
+}
+
+func (ss *storeService) DeleteLogo(ctx context.Context, userID uuid.UUID) (*model.StoreRes, error) {
+	return ss.deleteStoreImage(ctx, userID, "logo_url", "DeleteLogo", "logo")
+}
+
+func (ss *storeService) UpdateBanner(ctx context.Context, userID uuid.UUID, file *multipart.FileHeader) (*model.StoreRes, error) {
+	return ss.updateStoreImage(ctx, userID, file, "banner_url", ss.MaxBannerSize, "UpdateBanner", "banner")
+}
+
+func (ss *storeService) DeleteBanner(ctx context.Context, userID uuid.UUID) (*model.StoreRes, error) {
+	return ss.deleteStoreImage(ctx, userID, "banner_url", "DeleteBanner", "banner")
+}
+
+// updateStoreImage saves the file first, updates the DB column, then removes
+// the previous file (best-effort). Mirrors userService.UpdateAvatar.
+func (ss *storeService) updateStoreImage(ctx context.Context, userID uuid.UUID, file *multipart.FileHeader, column string, maxSize int64, fn, label string) (*model.StoreRes, error) {
+	log := ss.logger(ctx, fn).WithField("user_id", userID.String())
+
+	if file.Size > maxSize {
+		return nil, apperrors.Wrap(nil, http.StatusUnprocessableEntity,
+			fmt.Sprintf("%s exceeds maximum size of %d MB", label, maxSize/(1024*1024)))
+	}
+
+	store, err := ss.StoreRepo.GetByUserID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, apperrors.Wrap(nil, http.StatusNotFound, "store not found")
+		}
+		log.WithError(err).Error("failed to retrieve store")
+		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to upload "+label)
+	}
+
+	publicPath, err := storage.SaveUpload(file, ss.UploadDir, "stores", storage.MIMEJPEG, storage.MIMEPNG, storage.MIMEWebP)
+	if err != nil {
+		if errors.Is(err, storage.ErrUnsupportedType) {
+			return nil, apperrors.Wrap(nil, http.StatusUnprocessableEntity, "unsupported format (allowed: JPEG, PNG, WebP)")
+		}
+		log.WithError(err).Error("failed to save " + label + " file")
+		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to upload "+label)
+	}
+
+	if err := ss.StoreRepo.UpdateFields(ctx, store.ID, map[string]any{column: publicPath}); err != nil {
+		if rmErr := storage.Remove(storage.DiskPath(ss.UploadDir, publicPath)); rmErr != nil {
+			log.WithError(rmErr).Warn("failed to remove orphaned " + label + " file")
+		}
+		log.WithError(err).Error("failed to update store " + label)
+		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to upload "+label)
+	}
+
+	if old := storeField(store, column); old != nil {
+		if err := storage.Remove(storage.DiskPath(ss.UploadDir, *old)); err != nil {
+			log.WithError(err).Warn("failed to remove previous " + label + " file")
+		}
+	}
+
+	updated, err := ss.StoreRepo.GetByID(ctx, store.ID)
+	if err != nil {
+		log.WithError(err).Error("failed to retrieve updated store")
+		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to upload "+label)
+	}
+
+	log.Info("store " + label + " updated")
+	return storeResponse(updated), nil
+}
+
+func (ss *storeService) deleteStoreImage(ctx context.Context, userID uuid.UUID, column, fn, label string) (*model.StoreRes, error) {
+	log := ss.logger(ctx, fn).WithField("user_id", userID.String())
+
+	store, err := ss.StoreRepo.GetByUserID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, apperrors.Wrap(nil, http.StatusNotFound, "store not found")
+		}
+		log.WithError(err).Error("failed to retrieve store")
+		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to delete "+label)
+	}
+
+	old := storeField(store, column)
+	if old == nil {
+		return nil, apperrors.Wrap(nil, http.StatusNotFound, label+" not found")
+	}
+
+	if err := ss.StoreRepo.UpdateFields(ctx, store.ID, map[string]any{column: nil}); err != nil {
+		log.WithError(err).Error("failed to clear store " + label)
+		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to delete "+label)
+	}
+
+	if err := storage.Remove(storage.DiskPath(ss.UploadDir, *old)); err != nil {
+		log.WithError(err).Warn("failed to remove " + label + " file")
+	}
+
+	updated, err := ss.StoreRepo.GetByID(ctx, store.ID)
+	if err != nil {
+		log.WithError(err).Error("failed to retrieve updated store")
+		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to delete "+label)
+	}
+
+	log.Info("store " + label + " deleted")
+	return storeResponse(updated), nil
+}
+
+// storeField reads either the logo or banner URL column.
+func storeField(store *entity.Store, column string) *string {
+	if column == "banner_url" {
+		return store.BannerURL
+	}
+	return store.LogoURL
 }
 
 // requireActiveStore loads the caller's store and enforces the

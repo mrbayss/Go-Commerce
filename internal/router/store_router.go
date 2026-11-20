@@ -12,6 +12,10 @@ func SetupStoreRoutes(api fiber.Router, sc *controller.StoreController, requireA
 	stores.Post("", requireAuth, sc.Create)
 	stores.Get("/me", requireAuth, sc.GetMine)
 	stores.Patch("/me", requireAuth, sc.UpdateMine)
+	stores.Put("/me/logo", requireAuth, sc.UpdateLogo)
+	stores.Delete("/me/logo", requireAuth, sc.DeleteLogo)
+	stores.Put("/me/banner", requireAuth, sc.UpdateBanner)
+	stores.Delete("/me/banner", requireAuth, sc.DeleteBanner)
 
 	admin := api.Group("/admin/stores")
 	admin.Get("", requireAuth, requireAdmin, sc.List)
