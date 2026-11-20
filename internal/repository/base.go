@@ -9,6 +9,7 @@ import (
 type Repository[T any] interface {
 	Create(ctx context.Context, entity *T) (*T, error)
 	Updates(ctx context.Context, entity *T, id any) error
+	UpdateFields(ctx context.Context, id any, fields map[string]any) error
 	Delete(ctx context.Context, id any) error
 	GetByID(ctx context.Context, id any) (*T, error)
 	GetByColumn(ctx context.Context, column string, value any) (*T, error)
@@ -32,6 +33,13 @@ func (r *RepositoryImpl[T]) Create(ctx context.Context, entity *T) (*T, error) {
 // Fill id with either string or uuid.UUID
 func (r *RepositoryImpl[T]) Updates(ctx context.Context, entity *T, id any) error {
 	return r.db.WithContext(ctx).Model(new(T)).Where("id = ?", id).Updates(entity).Error
+}
+
+// UpdateFields updates only the given columns. Unlike Updates, it can write
+// zero values (empty string, nil) and leaves other columns untouched.
+// Fill id with either string or uuid.UUID
+func (r *RepositoryImpl[T]) UpdateFields(ctx context.Context, id any, fields map[string]any) error {
+	return r.db.WithContext(ctx).Model(new(T)).Where("id = ?", id).Updates(fields).Error
 }
 
 // Fill id with either string or uuid.UUID

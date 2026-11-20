@@ -8,4 +8,5 @@ import (
 func SetupUserRoutes(api fiber.Router, uc *controller.UserController, requireAuth fiber.Handler) {
 	users := api.Group("/users")
 	users.Get("/me", requireAuth, uc.GetMe)
+	users.Patch("/me", requireAuth, uc.UpdateMe)
 }

@@ -1,12 +1,9 @@
 package controller
 
 import (
-	"net/http"
-
 	"github.com/gofiber/fiber/v3"
-	"github.com/google/uuid"
-	apperrors "github.com/mrbayss/Go-Commerce/internal/domain"
 	"github.com/mrbayss/Go-Commerce/internal/middleware"
+	"github.com/mrbayss/Go-Commerce/internal/model"
 	"github.com/mrbayss/Go-Commerce/internal/model/response"
 	"github.com/mrbayss/Go-Commerce/internal/service"
 )
@@ -22,14 +19,9 @@ func NewUserController(userService service.UserService) *UserController {
 }
 
 func (uc *UserController) GetMe(c fiber.Ctx) error {
-	claims, ok := middleware.AuthClaimsFrom(c.Context())
-	if !ok {
-		return &apperrors.AppError{Code: http.StatusUnauthorized, Message: "unauthorized"}
-	}
-
-	userID, err := uuid.Parse(claims.UserID)
+	userID, _, err := middleware.AuthIdentity(c)
 	if err != nil {
-		return &apperrors.AppError{Code: http.StatusUnauthorized, Message: "invalid user identity"}
+		return err
 	}
 
 	res, err := uc.UserService.GetProfile(c.Context(), userID)
@@ -38,4 +30,23 @@ func (uc *UserController) GetMe(c fiber.Ctx) error {
 	}
 
 	return response.SuccessResponse(c, "profile retrieved successfully", res)
+}
+
+func (uc *UserController) UpdateMe(c fiber.Ctx) error {
+	var request model.UpdateProfileReq
+	if err := c.Bind().Body(&request); err != nil {
+		return err
+	}
+
+	userID, _, err := middleware.AuthIdentity(c)
+	if err != nil {
+		return err
+	}
+
+	res, err := uc.UserService.UpdateProfile(c.Context(), userID, request)
+	if err != nil {
+		return err
+	}
+
+	return response.SuccessResponse(c, "profile updated successfully", res)
 }
