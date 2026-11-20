@@ -9,3 +9,6 @@ config.yaml
 
 # Logs
 *.log
+
+# Local uploads
+storage/
