@@ -62,6 +62,7 @@ func main() {
 	authRepo := repository.NewAuthRepository(database)
 	userRepo := repository.NewUserRepository(database)
 	storeRepo := repository.NewStoreRepository(database)
+	categoryRepo := repository.NewCategoryRepository(database)
 
 	// service
 	authService := service.NewAuthService(
@@ -77,11 +78,13 @@ func main() {
 	)
 	userService := service.NewUserService(userRepo, log, redisClient, validator.Validator, cfg.Upload.Dir, cfg.Upload.MaxAvatarSize)
 	storeService := service.NewStoreService(storeRepo, userRepo, log, validator.Validator, cfg.Store.CommissionRate, cfg.Upload.Dir, cfg.Store.MaxLogoSize, cfg.Store.MaxBannerSize)
+	categoryService := service.NewCategoryService(categoryRepo, log, validator.Validator)
 
 	// controller
 	authController := controller.NewAuthController(authService)
 	userController := controller.NewUserController(userService)
 	storeController := controller.NewStoreController(storeService)
+	categoryController := controller.NewCategoryController(categoryService)
 
 	// HTTP server
 	appInstance := app.NewFiber(cfg, log, validator)
@@ -96,6 +99,7 @@ func main() {
 		authController,
 		userController,
 		storeController,
+		categoryController,
 		authMiddleware,
 		requireAdmin,
 	)

@@ -10,6 +10,7 @@ func SetupRoutes(
 	authController *controller.AuthController,
 	userController *controller.UserController,
 	storeController *controller.StoreController,
+	categoryController *controller.CategoryController,
 	requireAuth fiber.Handler,
 	requireAdmin fiber.Handler,
 ) {
@@ -17,4 +18,5 @@ func SetupRoutes(
 	SetupAuthRoutes(apiV1, authController, requireAuth)
 	SetupUserRoutes(apiV1, userController, requireAuth)
 	SetupStoreRoutes(apiV1, storeController, requireAuth, requireAdmin)
+	SetupCategoryRoutes(apiV1, categoryController, requireAuth, requireAdmin)
 }
