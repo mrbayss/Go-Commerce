@@ -1,11 +1,7 @@
 package controller
 
 import (
-	"net/http"
-
 	"github.com/gofiber/fiber/v3"
-	"github.com/google/uuid"
-	apperrors "github.com/mrbayss/Go-Commerce/internal/domain"
 	"github.com/mrbayss/Go-Commerce/internal/middleware"
 	"github.com/mrbayss/Go-Commerce/internal/model"
 	"github.com/mrbayss/Go-Commerce/internal/model/response"
@@ -28,7 +24,7 @@ func (ac *AuthController) SignUp(c fiber.Ctx) error {
 		return err // Let middleware handle bind errors
 	}
 
-	res, err := ac.AuthService.SignUp(c, request)
+	res, err := ac.AuthService.SignUp(c.Context(), request)
 	if err != nil {
 		return err // Let middleware handle all errors
 	}
@@ -42,7 +38,7 @@ func (ac *AuthController) VerifyOTP(c fiber.Ctx) error {
 		return err
 	}
 
-	res, err := ac.AuthService.VerifyOTP(c, request)
+	res, err := ac.AuthService.VerifyOTP(c.Context(), request)
 	if err != nil {
 		return err
 	}
@@ -56,7 +52,7 @@ func (ac *AuthController) ResendOTP(c fiber.Ctx) error {
 		return err
 	}
 
-	res, err := ac.AuthService.ResendOTP(c, request)
+	res, err := ac.AuthService.ResendOTP(c.Context(), request)
 	if err != nil {
 		return err
 	}
@@ -70,7 +66,7 @@ func (ac *AuthController) Login(c fiber.Ctx) error {
 		return err
 	}
 
-	res, err := ac.AuthService.Login(c, request)
+	res, err := ac.AuthService.Login(c.Context(), request)
 	if err != nil {
 		return err
 	}
@@ -84,7 +80,7 @@ func (ac *AuthController) RefreshToken(c fiber.Ctx) error {
 		return err
 	}
 
-	res, err := ac.AuthService.RefreshToken(c, request)
+	res, err := ac.AuthService.RefreshToken(c.Context(), request)
 	if err != nil {
 		return err
 	}
@@ -93,14 +89,9 @@ func (ac *AuthController) RefreshToken(c fiber.Ctx) error {
 }
 
 func (ac *AuthController) Logout(c fiber.Ctx) error {
-	claims, ok := middleware.AuthClaimsFrom(c.Context())
-	if !ok {
-		return &apperrors.AppError{Code: http.StatusUnauthorized, Message: "unauthorized"}
-	}
-
-	userID, err := uuid.Parse(claims.UserID)
+	userID, claims, err := middleware.AuthIdentity(c)
 	if err != nil {
-		return &apperrors.AppError{Code: http.StatusUnauthorized, Message: "invalid user identity"}
+		return err
 	}
 
 	if err := ac.AuthService.Logout(c.Context(), userID, claims.SessionID, claims.ExpiresAt); err != nil {

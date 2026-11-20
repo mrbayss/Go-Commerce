@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/gofiber/fiber/v3"
+	"github.com/google/uuid"
 	apperrors "github.com/mrbayss/Go-Commerce/internal/domain"
 	"github.com/mrbayss/Go-Commerce/internal/pkg/jwt"
 	"github.com/redis/go-redis/v9"
@@ -26,6 +27,19 @@ func AuthClaimsFrom(ctx context.Context) (*jwt.Claims, bool) {
 		return nil, false
 	}
 	return claims, true
+}
+
+func AuthIdentity(c fiber.Ctx) (uuid.UUID, *jwt.Claims, error) {
+	claims, ok := AuthClaimsFrom(c.Context())
+	if !ok {
+		return uuid.Nil, nil, &apperrors.AppError{Code: http.StatusUnauthorized, Message: "unauthorized"}
+	}
+
+	userID, err := uuid.Parse(claims.UserID)
+	if err != nil {
+		return uuid.Nil, nil, &apperrors.AppError{Code: http.StatusUnauthorized, Message: "invalid user identity"}
+	}
+	return userID, claims, nil
 }
 
 type requireAuthMiddleware struct {
