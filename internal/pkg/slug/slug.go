@@ -5,9 +5,14 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"strings"
 	"unicode"
 )
+
+// ErrConflict signals that no free slug could be found after all retries.
+var ErrConflict = errors.New("slug already taken")
 
 const (
 	maxAttempts = 5
@@ -53,13 +58,7 @@ func Unique(ctx context.Context, name string, exists func(context.Context, strin
 		}
 		slug = base + "-" + randomHex()
 	}
-	return "", errConflict{base: base}
-}
-
-type errConflict struct{ base string }
-
-func (e errConflict) Error() string {
-	return "slug already taken: " + e.base
+	return "", fmt.Errorf("%w: %s", ErrConflict, base)
 }
 
 func randomHex() string {

@@ -15,6 +15,7 @@ import (
 	"github.com/mrbayss/Go-Commerce/infrastructure/pkg/mailer"
 	"github.com/mrbayss/Go-Commerce/infrastructure/validation"
 	"github.com/mrbayss/Go-Commerce/internal/controller"
+	"github.com/mrbayss/Go-Commerce/internal/entity"
 	"github.com/mrbayss/Go-Commerce/internal/middleware"
 	"github.com/mrbayss/Go-Commerce/internal/pkg/jwt"
 	"github.com/mrbayss/Go-Commerce/internal/repository"
@@ -60,6 +61,7 @@ func main() {
 	// repository
 	authRepo := repository.NewAuthRepository(database)
 	userRepo := repository.NewUserRepository(database)
+	storeRepo := repository.NewStoreRepository(database)
 
 	// service
 	authService := service.NewAuthService(
@@ -74,23 +76,28 @@ func main() {
 		jwtTokenizer,
 	)
 	userService := service.NewUserService(userRepo, log, redisClient, validator.Validator, cfg.Upload.Dir, cfg.Upload.MaxAvatarSize)
+	storeService := service.NewStoreService(storeRepo, userRepo, log, validator.Validator, cfg.Store.CommissionRate)
 
 	// controller
 	authController := controller.NewAuthController(authService)
 	userController := controller.NewUserController(userService)
+	storeController := controller.NewStoreController(storeService)
 
 	// HTTP server
 	appInstance := app.NewFiber(cfg, log, validator)
 
 	// HTTP middleware guards
 	authMiddleware := middleware.RequireAuth(jwtTokenizer, redisClient)
+	requireAdmin := middleware.RequireRoles(entity.UserRoleAdmin)
 
 	//router
 	router.SetupRoutes(
 		appInstance,
 		authController,
 		userController,
+		storeController,
 		authMiddleware,
+		requireAdmin,
 	)
 
 	// health check
