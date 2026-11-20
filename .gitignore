@@ -11,4 +11,7 @@ config.yaml
 *.log
 
 # Local uploads
-storage/
+/storage/
+
+# Local docs
+/docs/
