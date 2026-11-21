@@ -443,27 +443,18 @@ func (ps *productService) DeleteVariant(ctx context.Context, userID, productID, 
 		return nil, err
 	}
 
-	variant, err := ps.ProductRepo.GetVariant(ctx, product.ID, variantID)
-	if err != nil {
+	// Guards (last variant / last active variant) run inside the repository
+	// under a product row lock so concurrent deletes cannot race past them.
+	if err := ps.ProductRepo.DeleteVariantChecked(ctx, product.ID, variantID); err != nil {
+		if errors.Is(err, repository.ErrLastVariant) {
+			return nil, apperrors.Wrap(nil, http.StatusConflict, "cannot delete the last variant")
+		}
+		if errors.Is(err, repository.ErrLastActiveVariant) {
+			return nil, apperrors.Wrap(nil, http.StatusConflict, "cannot delete the last active variant")
+		}
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, apperrors.Wrap(nil, http.StatusNotFound, "variant not found")
 		}
-		log.WithError(err).Error("failed to retrieve variant")
-		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to delete variant")
-	}
-
-	if variant.IsActive {
-		active, err := ps.ProductRepo.CountActiveVariants(ctx, product.ID)
-		if err != nil {
-			log.WithError(err).Error("failed to count active variants")
-			return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to delete variant")
-		}
-		if active <= 1 {
-			return nil, apperrors.Wrap(nil, http.StatusConflict, "cannot delete the last active variant")
-		}
-	}
-
-	if err := ps.ProductRepo.DeleteVariant(ctx, variant.ID); err != nil {
 		log.WithError(err).Error("failed to delete variant")
 		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to delete variant")
 	}
@@ -497,6 +488,8 @@ func (ps *productService) AddImage(ctx context.Context, userID, productID uuid.U
 		return nil, err
 	}
 
+	// Fast pre-check so a full product fails before any file is written;
+	// the authoritative check happens inside CreateImageChecked under lock.
 	count, err := ps.ProductRepo.CountImages(ctx, product.ID)
 	if err != nil {
 		log.WithError(err).Error("failed to count images")
@@ -516,15 +509,13 @@ func (ps *productService) AddImage(ctx context.Context, userID, productID uuid.U
 		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to upload image")
 	}
 
-	img := &entity.ProductImage{
-		ProductID: product.ID,
-		URL:       url,
-		SortOrder: int(count),
-		IsPrimary: count == 0,
-	}
-	if err := ps.ProductRepo.CreateImage(ctx, img); err != nil {
+	if err := ps.ProductRepo.CreateImageChecked(ctx, product.ID, url, ps.MaxImages); err != nil {
 		if rmErr := storage.Remove(storage.DiskPath(ps.UploadDir, url)); rmErr != nil {
 			log.WithError(rmErr).Warn("failed to clean up uploaded image")
+		}
+		if errors.Is(err, repository.ErrImageLimit) {
+			return nil, apperrors.Wrap(nil, http.StatusUnprocessableEntity,
+				fmt.Sprintf("maximum %d images per product", ps.MaxImages))
 		}
 		log.WithError(err).Error("failed to record image")
 		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to upload image")

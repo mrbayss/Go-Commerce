@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/mrbayss/Go-Commerce/internal/entity"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type StoreRepository interface {
@@ -13,8 +14,8 @@ type StoreRepository interface {
 	GetByUserID(ctx context.Context, userID uuid.UUID) (*entity.Store, error)
 	GetBySlug(ctx context.Context, slug string) (*entity.Store, error)
 	ListByStatus(ctx context.Context, status string, page, limit int) ([]entity.Store, int64, error)
-	Approve(ctx context.Context, storeID, userID uuid.UUID, promoteToSeller bool) error
-	Reject(ctx context.Context, storeID, userID uuid.UUID, targetStatus entity.StoreStatus, demoteToBuyer bool) error
+	Approve(ctx context.Context, storeID, userID uuid.UUID) error
+	Reject(ctx context.Context, storeID, userID uuid.UUID) error
 }
 
 type storeRepository struct {
@@ -60,34 +61,41 @@ func (r *storeRepository) ListByStatus(ctx context.Context, status string, page,
 	return stores, total, nil
 }
 
-// Approve sets the store active and, when promoteToSeller is true, raises
-// the owner's role to seller — atomically.
-func (r *storeRepository) Approve(ctx context.Context, storeID, userID uuid.UUID, promoteToSeller bool) error {
+// Approve sets the store active and promotes the owner to seller — atomically.
+// The role update is conditional in SQL (only a buyer is promoted), so a
+// concurrent role change can never demote an admin or act on a stale read.
+func (r *storeRepository) Approve(ctx context.Context, storeID, userID uuid.UUID) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&entity.Store{}).Where("id = ?", storeID).Update("status", entity.StoreStatusActive).Error; err != nil {
 			return err
 		}
-		if promoteToSeller {
-			if err := tx.Model(&entity.User{}).Where("id = ?", userID).Update("role", entity.UserRoleSeller).Error; err != nil {
-				return err
-			}
-		}
-		return nil
+		return tx.Model(&entity.User{}).
+			Where("id = ? AND role = ?", userID, entity.UserRoleBuyer).
+			Update("role", entity.UserRoleSeller).Error
 	})
 }
 
-// Reject sets the store to targetStatus (rejected or suspended) and, when
-// demoteToBuyer is true, lowers the owner's role to buyer — atomically.
-func (r *storeRepository) Reject(ctx context.Context, storeID, userID uuid.UUID, targetStatus entity.StoreStatus, demoteToBuyer bool) error {
+// Reject suspends a once-active store (or rejects a never-active one) and
+// demotes the owner to buyer — atomically. The store row is locked so the
+// target status is decided from a consistent read, and the role update is
+// conditional in SQL (only a seller is demoted; admins stay admins).
+func (r *storeRepository) Reject(ctx context.Context, storeID, userID uuid.UUID) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&entity.Store{}).Where("id = ?", storeID).Update("status", targetStatus).Error; err != nil {
+		var store entity.Store
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&store, "id = ?", storeID).Error; err != nil {
 			return err
 		}
-		if demoteToBuyer {
-			if err := tx.Model(&entity.User{}).Where("id = ?", userID).Update("role", entity.UserRoleBuyer).Error; err != nil {
-				return err
-			}
+
+		// Never-approved stores become rejected; once-active stores become suspended.
+		target := entity.StoreStatusRejected
+		if store.Status == entity.StoreStatusActive || store.Status == entity.StoreStatusSuspended {
+			target = entity.StoreStatusSuspended
 		}
-		return nil
+		if err := tx.Model(&entity.Store{}).Where("id = ?", storeID).Update("status", target).Error; err != nil {
+			return err
+		}
+		return tx.Model(&entity.User{}).
+			Where("id = ? AND role = ?", userID, entity.UserRoleSeller).
+			Update("role", entity.UserRoleBuyer).Error
 	})
 }

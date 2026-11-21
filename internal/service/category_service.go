@@ -138,6 +138,7 @@ func (cs *categoryService) Update(ctx context.Context, id uuid.UUID, request mod
 
 	fields := make(map[string]any, 5)
 	parentChanged := false
+	var newParentID *uuid.UUID
 
 	if request.Name != nil {
 		name := strings.TrimSpace(*request.Name)
@@ -182,6 +183,7 @@ func (cs *categoryService) Update(ctx context.Context, id uuid.UUID, request mod
 			}
 			fields["parent_id"] = parentID
 			fields["level"] = parent.Level + 1
+			newParentID = &parentID
 			parentChanged = true
 		}
 	}
@@ -195,17 +197,19 @@ func (cs *categoryService) Update(ctx context.Context, id uuid.UUID, request mod
 		return nil, err
 	}
 
-	if err := cs.CatRepo.UpdateFields(ctx, cat.ID, fields); err != nil {
-		log.WithError(err).Error("failed to update category")
-		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to update category")
-	}
-
 	if parentChanged {
+		// Lock + cycle re-check + subtree recompute happen in one tx.
 		newLevel := fields["level"].(int)
-		if err := cs.CatRepo.UpdateSubtreeLevels(ctx, cat.ID, newLevel); err != nil {
-			log.WithError(err).Error("failed to recompute subtree levels")
+		if err := cs.CatRepo.UpdateHierarchy(ctx, cat.ID, fields, newParentID, newLevel); err != nil {
+			if errors.Is(err, repository.ErrCategoryCycle) {
+				return nil, apperrors.Wrap(nil, http.StatusUnprocessableEntity, "category cycle detected")
+			}
+			log.WithError(err).Error("failed to update category hierarchy")
 			return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to update category")
 		}
+	} else if err := cs.CatRepo.UpdateFields(ctx, cat.ID, fields); err != nil {
+		log.WithError(err).Error("failed to update category")
+		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to update category")
 	}
 
 	updated, err := cs.CatRepo.GetByID(ctx, cat.ID)

@@ -205,16 +205,9 @@ func (ss *storeService) Approve(ctx context.Context, storeID uuid.UUID) (*model.
 		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to approve store")
 	}
 
-	user, err := ss.UserRepo.GetByID(ctx, store.UserID)
-	if err != nil {
-		log.WithError(err).Error("failed to retrieve store owner")
-		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to approve store")
-	}
-
-	// Never demote an admin: only a plain buyer is promoted to seller.
-	promote := user.Role == entity.UserRoleBuyer
-
-	if err := ss.StoreRepo.Approve(ctx, storeID, store.UserID, promote); err != nil {
+	// Role promotion is decided atomically inside the repository tx
+	// (only a buyer is promoted; an admin is never demoted).
+	if err := ss.StoreRepo.Approve(ctx, storeID, store.UserID); err != nil {
 		log.WithError(err).Error("failed to approve store")
 		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to approve store")
 	}
@@ -241,20 +234,9 @@ func (ss *storeService) Reject(ctx context.Context, storeID uuid.UUID) (*model.S
 		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to reject store")
 	}
 
-	user, err := ss.UserRepo.GetByID(ctx, store.UserID)
-	if err != nil {
-		log.WithError(err).Error("failed to retrieve store owner")
-		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to reject store")
-	}
-
-	// Never-approved stores become rejected; once-active stores become suspended.
-	target := entity.StoreStatusRejected
-	if store.Status == entity.StoreStatusActive || store.Status == entity.StoreStatusSuspended {
-		target = entity.StoreStatusSuspended
-	}
-	demote := user.Role == entity.UserRoleSeller
-
-	if err := ss.StoreRepo.Reject(ctx, storeID, store.UserID, target, demote); err != nil {
+	// Target status and role demotion are decided atomically inside the
+	// repository tx (only a seller is demoted; an admin stays an admin).
+	if err := ss.StoreRepo.Reject(ctx, storeID, store.UserID); err != nil {
 		log.WithError(err).Error("failed to reject store")
 		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to reject store")
 	}

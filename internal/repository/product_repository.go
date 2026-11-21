@@ -2,10 +2,21 @@ package repository
 
 import (
 	"context"
+	"errors"
 
 	"github.com/google/uuid"
 	"github.com/mrbayss/Go-Commerce/internal/entity"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+)
+
+var (
+	// ErrLastVariant signals the product would be left with no variants at all.
+	ErrLastVariant = errors.New("cannot delete the last variant")
+	// ErrLastActiveVariant signals the product would lose its last active variant.
+	ErrLastActiveVariant = errors.New("cannot delete the last active variant")
+	// ErrImageLimit signals the product already has the maximum number of images.
+	ErrImageLimit = errors.New("image limit reached")
 )
 
 type ProductRepository interface {
@@ -18,10 +29,9 @@ type ProductRepository interface {
 	DeleteChildren(ctx context.Context, productID uuid.UUID) error
 	CreateVariant(ctx context.Context, v *entity.ProductVariant) error
 	GetVariant(ctx context.Context, productID, variantID uuid.UUID) (*entity.ProductVariant, error)
-	CountActiveVariants(ctx context.Context, productID uuid.UUID) (int64, error)
 	UpdateVariantFields(ctx context.Context, variantID uuid.UUID, fields map[string]any) error
-	DeleteVariant(ctx context.Context, variantID uuid.UUID) error
-	CreateImage(ctx context.Context, img *entity.ProductImage) error
+	DeleteVariantChecked(ctx context.Context, productID, variantID uuid.UUID) error
+	CreateImageChecked(ctx context.Context, productID uuid.UUID, url string, maxImages int) error
 	GetImage(ctx context.Context, productID, imageID uuid.UUID) (*entity.ProductImage, error)
 	ListImages(ctx context.Context, productID uuid.UUID) ([]entity.ProductImage, error)
 	UpdateImageFields(ctx context.Context, imageID uuid.UUID, fields map[string]any) error
@@ -123,24 +133,74 @@ func (r *productRepository) GetVariant(ctx context.Context, productID, variantID
 	return &v, err
 }
 
-func (r *productRepository) CountActiveVariants(ctx context.Context, productID uuid.UUID) (int64, error) {
-	var count int64
-	err := r.db.WithContext(ctx).Model(&entity.ProductVariant{}).
-		Where("product_id = ? AND is_active = ?", productID, true).
-		Count(&count).Error
-	return count, err
-}
-
 func (r *productRepository) UpdateVariantFields(ctx context.Context, variantID uuid.UUID, fields map[string]any) error {
 	return r.db.WithContext(ctx).Model(&entity.ProductVariant{}).Where("id = ?", variantID).Updates(fields).Error
 }
 
-func (r *productRepository) DeleteVariant(ctx context.Context, variantID uuid.UUID) error {
-	return r.db.WithContext(ctx).Delete(&entity.ProductVariant{}, "id = ?", variantID).Error
+// DeleteVariantChecked locks the product row, verifies the variant belongs to
+// it, enforces both "last variant" rules, and deletes — all in one
+// transaction, so concurrent deletes cannot race past the guard.
+//
+// Rules (design: a product must always keep at least one variant; all-
+// inactive is allowed):
+//   - last variant overall  -> ErrLastVariant
+//   - active variant that is the last active one -> ErrLastActiveVariant
+func (r *productRepository) DeleteVariantChecked(ctx context.Context, productID, variantID uuid.UUID) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&entity.Product{}, "id = ?", productID).Error; err != nil {
+			return err
+		}
+
+		var v entity.ProductVariant
+		if err := tx.First(&v, "id = ? AND product_id = ?", variantID, productID).Error; err != nil {
+			return err
+		}
+
+		var total int64
+		if err := tx.Model(&entity.ProductVariant{}).Where("product_id = ?", productID).Count(&total).Error; err != nil {
+			return err
+		}
+		if v.IsActive {
+			var active int64
+			if err := tx.Model(&entity.ProductVariant{}).
+				Where("product_id = ? AND is_active = ?", productID, true).
+				Count(&active).Error; err != nil {
+				return err
+			}
+			if active <= 1 {
+				return ErrLastActiveVariant
+			}
+		}
+		if total <= 1 {
+			return ErrLastVariant
+		}
+		return tx.Delete(&entity.ProductVariant{}, "id = ?", variantID).Error
+	})
 }
 
-func (r *productRepository) CreateImage(ctx context.Context, img *entity.ProductImage) error {
-	return r.db.WithContext(ctx).Create(img).Error
+// CreateImageChecked locks the product row, enforces the image limit, and
+// inserts the image in one transaction — concurrent uploads cannot exceed
+// maxImages. SortOrder and IsPrimary are derived under the lock.
+func (r *productRepository) CreateImageChecked(ctx context.Context, productID uuid.UUID, url string, maxImages int) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&entity.Product{}, "id = ?", productID).Error; err != nil {
+			return err
+		}
+
+		var count int64
+		if err := tx.Model(&entity.ProductImage{}).Where("product_id = ?", productID).Count(&count).Error; err != nil {
+			return err
+		}
+		if count >= int64(maxImages) {
+			return ErrImageLimit
+		}
+		return tx.Create(&entity.ProductImage{
+			ProductID: productID,
+			URL:       url,
+			SortOrder: int(count),
+			IsPrimary: count == 0,
+		}).Error
+	})
 }
 
 // GetImage scopes the lookup to the product so foreign images stay 404.
