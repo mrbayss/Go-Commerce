@@ -75,10 +75,6 @@ func (sc *StoreController) UpdateMine(c fiber.Ctx) error {
 }
 
 func (sc *StoreController) List(c fiber.Ctx) error {
-	if _, _, err := middleware.AuthIdentity(c); err != nil {
-		return err
-	}
-
 	status := c.Query("status")
 	page, limit := pagination(c)
 

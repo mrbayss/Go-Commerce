@@ -6,7 +6,6 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 	apperrors "github.com/mrbayss/Go-Commerce/internal/domain"
-	"github.com/mrbayss/Go-Commerce/internal/middleware"
 	"github.com/mrbayss/Go-Commerce/internal/model"
 	"github.com/mrbayss/Go-Commerce/internal/model/response"
 	"github.com/mrbayss/Go-Commerce/internal/service"
@@ -24,10 +23,6 @@ func NewCategoryController(categoryService service.CategoryService) *CategoryCon
 
 // List returns active categories (Bearer — sellers pick one when creating products).
 func (cc *CategoryController) List(c fiber.Ctx) error {
-	if _, _, err := middleware.AuthIdentity(c); err != nil {
-		return err
-	}
-
 	page, limit := pagination(c)
 	items, total, err := cc.CategoryService.List(c.Context(), true, page, limit)
 	if err != nil {
@@ -39,10 +34,6 @@ func (cc *CategoryController) List(c fiber.Ctx) error {
 
 // ListAll returns every category including inactive ones (admin).
 func (cc *CategoryController) ListAll(c fiber.Ctx) error {
-	if _, _, err := middleware.AuthIdentity(c); err != nil {
-		return err
-	}
-
 	page, limit := pagination(c)
 	items, total, err := cc.CategoryService.List(c.Context(), false, page, limit)
 	if err != nil {
@@ -53,10 +44,6 @@ func (cc *CategoryController) ListAll(c fiber.Ctx) error {
 }
 
 func (cc *CategoryController) Get(c fiber.Ctx) error {
-	if _, _, err := middleware.AuthIdentity(c); err != nil {
-		return err
-	}
-
 	id, err := parseCategoryID(c)
 	if err != nil {
 		return err
