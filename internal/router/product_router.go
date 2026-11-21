@@ -18,4 +18,8 @@ func SetupProductRoutes(api fiber.Router, pc *controller.ProductController, requ
 	products.Post("/:id/variants", requireAuth, pc.AddVariant)
 	products.Patch("/:id/variants/:variantId", requireAuth, pc.UpdateVariant)
 	products.Delete("/:id/variants/:variantId", requireAuth, pc.DeleteVariant)
+
+	products.Post("/:id/images", requireAuth, pc.AddImage)
+	products.Patch("/:id/images/:imageId", requireAuth, pc.UpdateImage)
+	products.Delete("/:id/images/:imageId", requireAuth, pc.DeleteImage)
 }

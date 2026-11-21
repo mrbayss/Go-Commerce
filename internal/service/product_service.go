@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"mime/multipart"
 	"net/http"
 	"strings"
 
@@ -32,15 +34,20 @@ type ProductService interface {
 	AddVariant(ctx context.Context, userID, productID uuid.UUID, request model.VariantReq) (*model.ProductRes, error)
 	UpdateVariant(ctx context.Context, userID, productID, variantID uuid.UUID, request model.UpdateVariantReq) (*model.ProductRes, error)
 	DeleteVariant(ctx context.Context, userID, productID, variantID uuid.UUID) (*model.ProductRes, error)
+	AddImage(ctx context.Context, userID, productID uuid.UUID, file *multipart.FileHeader) (*model.ProductRes, error)
+	UpdateImage(ctx context.Context, userID, productID, imageID uuid.UUID, request model.UpdateImageReq) (*model.ProductRes, error)
+	DeleteImage(ctx context.Context, userID, productID, imageID uuid.UUID) (*model.ProductRes, error)
 }
 
 type productService struct {
-	ProductRepo repository.ProductRepository
-	StoreRepo   repository.StoreRepository
-	CatRepo     repository.CategoryRepository
-	Log         *logrus.Logger
-	Validation  *validator.Validate
-	UploadDir   string
+	ProductRepo  repository.ProductRepository
+	StoreRepo    repository.StoreRepository
+	CatRepo      repository.CategoryRepository
+	Log          *logrus.Logger
+	Validation   *validator.Validate
+	UploadDir    string
+	MaxImageSize int64
+	MaxImages    int
 }
 
 func NewProductService(
@@ -50,14 +57,18 @@ func NewProductService(
 	log *logrus.Logger,
 	validation *validator.Validate,
 	uploadDir string,
+	maxImageSize int64,
+	maxImages int,
 ) ProductService {
 	return &productService{
-		ProductRepo: productRepo,
-		StoreRepo:   storeRepo,
-		CatRepo:     catRepo,
-		Log:         log,
-		Validation:  validation,
-		UploadDir:   uploadDir,
+		ProductRepo:  productRepo,
+		StoreRepo:    storeRepo,
+		CatRepo:      catRepo,
+		Log:          log,
+		Validation:   validation,
+		UploadDir:    uploadDir,
+		MaxImageSize: maxImageSize,
+		MaxImages:    maxImages,
 	}
 }
 
@@ -468,6 +479,171 @@ func (ps *productService) DeleteVariant(ctx context.Context, userID, productID, 
 	}
 
 	log.Info("variant deleted")
+	return productResponse(detail), nil
+}
+
+func (ps *productService) AddImage(ctx context.Context, userID, productID uuid.UUID, file *multipart.FileHeader) (*model.ProductRes, error) {
+	log := ps.logger(ctx, "AddImage").WithField("product_id", productID.String())
+
+	if file == nil {
+		return nil, apperrors.Wrap(nil, http.StatusUnprocessableEntity, "image file is required")
+	}
+	if file.Size > ps.MaxImageSize {
+		return nil, apperrors.Wrap(nil, http.StatusUnprocessableEntity, "image file size exceeds the maximum")
+	}
+
+	product, _, err := ownedProduct(ctx, ps.ProductRepo, ps.StoreRepo, userID, productID)
+	if err != nil {
+		return nil, err
+	}
+
+	count, err := ps.ProductRepo.CountImages(ctx, product.ID)
+	if err != nil {
+		log.WithError(err).Error("failed to count images")
+		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to upload image")
+	}
+	if count >= int64(ps.MaxImages) {
+		return nil, apperrors.Wrap(nil, http.StatusUnprocessableEntity,
+			fmt.Sprintf("maximum %d images per product", ps.MaxImages))
+	}
+
+	url, err := storage.SaveUpload(file, ps.UploadDir, "products", storage.MIMEJPEG, storage.MIMEPNG, storage.MIMEWebP)
+	if err != nil {
+		if errors.Is(err, storage.ErrUnsupportedType) {
+			return nil, apperrors.Wrap(nil, http.StatusUnprocessableEntity, "unsupported image type")
+		}
+		log.WithError(err).Error("failed to save image")
+		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to upload image")
+	}
+
+	img := &entity.ProductImage{
+		ProductID: product.ID,
+		URL:       url,
+		SortOrder: int(count),
+		IsPrimary: count == 0,
+	}
+	if err := ps.ProductRepo.CreateImage(ctx, img); err != nil {
+		if rmErr := storage.Remove(storage.DiskPath(ps.UploadDir, url)); rmErr != nil {
+			log.WithError(rmErr).Warn("failed to clean up uploaded image")
+		}
+		log.WithError(err).Error("failed to record image")
+		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to upload image")
+	}
+
+	detail, err := ps.ProductRepo.GetDetail(ctx, product.ID)
+	if err != nil {
+		log.WithError(err).Error("failed to retrieve product")
+		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to upload image")
+	}
+
+	log.Info("image uploaded")
+	return productResponse(detail), nil
+}
+
+func (ps *productService) UpdateImage(ctx context.Context, userID, productID, imageID uuid.UUID, request model.UpdateImageReq) (*model.ProductRes, error) {
+	log := ps.logger(ctx, "UpdateImage").WithField("image_id", imageID.String())
+
+	if err := ps.Validation.Struct(request); err != nil {
+		log.WithError(err).Error("validation failed")
+		return nil, err
+	}
+
+	product, _, err := ownedProduct(ctx, ps.ProductRepo, ps.StoreRepo, userID, productID)
+	if err != nil {
+		return nil, err
+	}
+
+	img, err := ps.ProductRepo.GetImage(ctx, product.ID, imageID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, apperrors.Wrap(nil, http.StatusNotFound, "image not found")
+		}
+		log.WithError(err).Error("failed to retrieve image")
+		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to update image")
+	}
+
+	fields := make(map[string]any, 3)
+	if request.AltText != nil {
+		fields["alt_text"] = *request.AltText
+	}
+	if request.SortOrder != nil {
+		fields["sort_order"] = *request.SortOrder
+	}
+
+	// Primary is handled transactionally so only one image keeps the flag.
+	if request.IsPrimary != nil && *request.IsPrimary && !img.IsPrimary {
+		if err := ps.ProductRepo.SetPrimaryImage(ctx, product.ID, imageID); err != nil {
+			log.WithError(err).Error("failed to set primary image")
+			return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to update image")
+		}
+	}
+
+	if len(fields) > 0 {
+		if err := ps.ProductRepo.UpdateImageFields(ctx, imageID, fields); err != nil {
+			log.WithError(err).Error("failed to update image")
+			return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to update image")
+		}
+	}
+
+	detail, err := ps.ProductRepo.GetDetail(ctx, product.ID)
+	if err != nil {
+		log.WithError(err).Error("failed to retrieve product")
+		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to update image")
+	}
+
+	log.Info("image updated")
+	return productResponse(detail), nil
+}
+
+func (ps *productService) DeleteImage(ctx context.Context, userID, productID, imageID uuid.UUID) (*model.ProductRes, error) {
+	log := ps.logger(ctx, "DeleteImage").WithField("image_id", imageID.String())
+
+	product, _, err := ownedProduct(ctx, ps.ProductRepo, ps.StoreRepo, userID, productID)
+	if err != nil {
+		return nil, err
+	}
+
+	img, err := ps.ProductRepo.GetImage(ctx, product.ID, imageID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, apperrors.Wrap(nil, http.StatusNotFound, "image not found")
+		}
+		log.WithError(err).Error("failed to retrieve image")
+		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to delete image")
+	}
+	wasPrimary := img.IsPrimary
+
+	if err := ps.ProductRepo.DeleteImage(ctx, img.ID); err != nil {
+		log.WithError(err).Error("failed to delete image")
+		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to delete image")
+	}
+
+	if err := storage.Remove(storage.DiskPath(ps.UploadDir, img.URL)); err != nil {
+		log.WithError(err).Warn("failed to remove image file")
+	}
+
+	// Promote the lowest sort_order remaining image to keep one primary.
+	if wasPrimary {
+		images, err := ps.ProductRepo.ListImages(ctx, product.ID)
+		if err != nil {
+			log.WithError(err).Error("failed to list images")
+			return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to delete image")
+		}
+		if len(images) > 0 {
+			if err := ps.ProductRepo.SetPrimaryImage(ctx, product.ID, images[0].ID); err != nil {
+				log.WithError(err).Error("failed to reassign primary image")
+				return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to delete image")
+			}
+		}
+	}
+
+	detail, err := ps.ProductRepo.GetDetail(ctx, product.ID)
+	if err != nil {
+		log.WithError(err).Error("failed to retrieve product")
+		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to delete image")
+	}
+
+	log.Info("image deleted")
 	return productResponse(detail), nil
 }
 

@@ -80,7 +80,7 @@ func main() {
 	userService := service.NewUserService(userRepo, log, redisClient, validator.Validator, cfg.Upload.Dir, cfg.Upload.MaxAvatarSize)
 	storeService := service.NewStoreService(storeRepo, userRepo, log, validator.Validator, cfg.Store.CommissionRate, cfg.Upload.Dir, cfg.Store.MaxLogoSize, cfg.Store.MaxBannerSize)
 	categoryService := service.NewCategoryService(categoryRepo, log, validator.Validator)
-	productService := service.NewProductService(productRepo, storeRepo, categoryRepo, log, validator.Validator, cfg.Upload.Dir)
+	productService := service.NewProductService(productRepo, storeRepo, categoryRepo, log, validator.Validator, cfg.Upload.Dir, cfg.Product.MaxImageSize, cfg.Product.MaxImagesPerProduct)
 
 	// controller
 	authController := controller.NewAuthController(authService)

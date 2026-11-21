@@ -197,6 +197,83 @@ func (pc *ProductController) DeleteVariant(c fiber.Ctx) error {
 	return response.SuccessResponse(c, "variant deleted successfully", res)
 }
 
+func (pc *ProductController) AddImage(c fiber.Ctx) error {
+	file, err := c.FormFile("image")
+	if err != nil {
+		return apperrors.Wrap(err, http.StatusUnprocessableEntity, "image file is required")
+	}
+
+	userID, _, err := middleware.AuthIdentity(c)
+	if err != nil {
+		return err
+	}
+
+	productID, err := parseProductID(c)
+	if err != nil {
+		return err
+	}
+
+	res, err := pc.ProductService.AddImage(c.Context(), userID, productID, file)
+	if err != nil {
+		return err
+	}
+
+	return response.CreatedResponse(c, "image uploaded successfully", res)
+}
+
+func (pc *ProductController) UpdateImage(c fiber.Ctx) error {
+	var request model.UpdateImageReq
+	if err := c.Bind().Body(&request); err != nil {
+		return err
+	}
+
+	userID, _, err := middleware.AuthIdentity(c)
+	if err != nil {
+		return err
+	}
+
+	productID, err := parseProductID(c)
+	if err != nil {
+		return err
+	}
+
+	imageID, err := parseImageID(c)
+	if err != nil {
+		return err
+	}
+
+	res, err := pc.ProductService.UpdateImage(c.Context(), userID, productID, imageID, request)
+	if err != nil {
+		return err
+	}
+
+	return response.SuccessResponse(c, "image updated successfully", res)
+}
+
+func (pc *ProductController) DeleteImage(c fiber.Ctx) error {
+	userID, _, err := middleware.AuthIdentity(c)
+	if err != nil {
+		return err
+	}
+
+	productID, err := parseProductID(c)
+	if err != nil {
+		return err
+	}
+
+	imageID, err := parseImageID(c)
+	if err != nil {
+		return err
+	}
+
+	res, err := pc.ProductService.DeleteImage(c.Context(), userID, productID, imageID)
+	if err != nil {
+		return err
+	}
+
+	return response.SuccessResponse(c, "image deleted successfully", res)
+}
+
 func parseProductID(c fiber.Ctx) (uuid.UUID, error) {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
@@ -209,6 +286,14 @@ func parseVariantID(c fiber.Ctx) (uuid.UUID, error) {
 	id, err := uuid.Parse(c.Params("variantId"))
 	if err != nil {
 		return uuid.Nil, apperrors.Wrap(nil, http.StatusBadRequest, "invalid variant id")
+	}
+	return id, nil
+}
+
+func parseImageID(c fiber.Ctx) (uuid.UUID, error) {
+	id, err := uuid.Parse(c.Params("imageId"))
+	if err != nil {
+		return uuid.Nil, apperrors.Wrap(nil, http.StatusBadRequest, "invalid image id")
 	}
 	return id, nil
 }

@@ -21,6 +21,12 @@ type ProductRepository interface {
 	CountActiveVariants(ctx context.Context, productID uuid.UUID) (int64, error)
 	UpdateVariantFields(ctx context.Context, variantID uuid.UUID, fields map[string]any) error
 	DeleteVariant(ctx context.Context, variantID uuid.UUID) error
+	CreateImage(ctx context.Context, img *entity.ProductImage) error
+	GetImage(ctx context.Context, productID, imageID uuid.UUID) (*entity.ProductImage, error)
+	ListImages(ctx context.Context, productID uuid.UUID) ([]entity.ProductImage, error)
+	UpdateImageFields(ctx context.Context, imageID uuid.UUID, fields map[string]any) error
+	DeleteImage(ctx context.Context, imageID uuid.UUID) error
+	SetPrimaryImage(ctx context.Context, productID, imageID uuid.UUID) error
 }
 
 type productRepository struct {
@@ -131,4 +137,40 @@ func (r *productRepository) UpdateVariantFields(ctx context.Context, variantID u
 
 func (r *productRepository) DeleteVariant(ctx context.Context, variantID uuid.UUID) error {
 	return r.db.WithContext(ctx).Delete(&entity.ProductVariant{}, "id = ?", variantID).Error
+}
+
+func (r *productRepository) CreateImage(ctx context.Context, img *entity.ProductImage) error {
+	return r.db.WithContext(ctx).Create(img).Error
+}
+
+// GetImage scopes the lookup to the product so foreign images stay 404.
+func (r *productRepository) GetImage(ctx context.Context, productID, imageID uuid.UUID) (*entity.ProductImage, error) {
+	var img entity.ProductImage
+	err := r.db.WithContext(ctx).First(&img, "id = ? AND product_id = ?", imageID, productID).Error
+	return &img, err
+}
+
+func (r *productRepository) ListImages(ctx context.Context, productID uuid.UUID) ([]entity.ProductImage, error) {
+	var imgs []entity.ProductImage
+	err := r.db.WithContext(ctx).Where("product_id = ?", productID).Order("sort_order ASC").Find(&imgs).Error
+	return imgs, err
+}
+
+func (r *productRepository) UpdateImageFields(ctx context.Context, imageID uuid.UUID, fields map[string]any) error {
+	return r.db.WithContext(ctx).Model(&entity.ProductImage{}).Where("id = ?", imageID).Updates(fields).Error
+}
+
+func (r *productRepository) DeleteImage(ctx context.Context, imageID uuid.UUID) error {
+	return r.db.WithContext(ctx).Delete(&entity.ProductImage{}, "id = ?", imageID).Error
+}
+
+// SetPrimaryImage atomically unsets every primary flag of the product, then
+// sets it on imageID — guaranteeing at most one primary per product.
+func (r *productRepository) SetPrimaryImage(ctx context.Context, productID, imageID uuid.UUID) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&entity.ProductImage{}).Where("product_id = ?", productID).Update("is_primary", false).Error; err != nil {
+			return err
+		}
+		return tx.Model(&entity.ProductImage{}).Where("id = ?", imageID).Update("is_primary", true).Error
+	})
 }

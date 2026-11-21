@@ -59,6 +59,12 @@ type VariantRes struct {
 	UpdatedAt      time.Time       `json:"updated_at"`
 }
 
+type UpdateImageReq struct {
+	AltText   *string `json:"alt_text" validate:"omitempty,max=255"`
+	SortOrder *int    `json:"sort_order" validate:"omitempty,min=0"`
+	IsPrimary *bool   `json:"is_primary"`
+}
+
 type ImageRes struct {
 	ID        uuid.UUID `json:"id"`
 	ProductID uuid.UUID `json:"product_id"`
