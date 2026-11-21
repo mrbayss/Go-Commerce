@@ -7,7 +7,7 @@
 [![Redis](https://img.shields.io/badge/Redis-v9-DC382D?logo=redis&logoColor=white)](https://redis.io/)
 [![Status](https://img.shields.io/badge/status-alpha-yellow)](./PROGRESS.md)
 
-> Backend API e-commerce **multi-vendor** (Go + Fiber v3). Status: **alpha** — slice autentikasi dasar sudah ada, domain lain masih backlog.
+> Backend API e-commerce **multi-vendor** (Go + Fiber v3). Status: **alpha** — slice autentikasi dasar + domain katalog (store, category, product) sudah ada, domain lain masih backlog.
 
 ## Deskripsi
 
@@ -17,7 +17,10 @@ GoCommerce adalah backend API e-commerce multi-vendor (pola Shopee/Tokopedia). D
 
 - **Auth:** signup → verify OTP → resend OTP → login → refresh token → logout/revoke session.
 - **User:** `GET /users/me` (baca profil), `PATCH /users/me` (ubah nama/telepon), `PUT /users/me/avatar` (upload/ganti foto profil), `DELETE /users/me/avatar` (hapus foto profil) — semuanya Bearer Token. File avatar tersaji publik di `/uploads/avatars/...`.
-- **Middleware:** JWT stateless + RBAC dasar (`RequireAuth` aktif di logout dan endpoint user).
+- **Store:** daftar toko + kelola toko sendiri (nama, deskripsi, logo, banner), disetujui admin (`approve`/`reject`) yang otomatis menaikkan/menurunkan role `buyer`↔`seller`.
+- **Category:** CRUD admin hierarkis (proteksi cycle, guard bila punya anak/produk) + baca kategori aktif.
+- **Product:** produk dengan varian (SKU, harga, stok), CRUD milik sendiri, foto produk (maks. 10 foto, satu primary otomatis pindah saat dihapus). Semua endpoint domain ini Bearer Auth.
+- **Middleware:** JWT stateless + RBAC dasar (`RequireAuth`, `RequireRoles`).
 - **Domain lain:** belum dikerjakan (lihat [PROGRESS.md](./PROGRESS.md)).
 
 ## Tech Stack
@@ -78,7 +81,34 @@ Env override: Viper mengganti `.` → `_` (mis. `POSTGRES_PASS`, `JWT_SECRET`). 
 | PATCH | `/api/v1/users/me` | Bearer Token |
 | PUT | `/api/v1/users/me/avatar` | Bearer Token |
 | DELETE | `/api/v1/users/me/avatar` | Bearer Token |
-| GET | `/uploads/avatars/<file>` | Public (file statis) |
+| POST | `/api/v1/stores` | Bearer Token |
+| GET | `/api/v1/stores/me` | Bearer Token |
+| PATCH | `/api/v1/stores/me` | Bearer Token |
+| PUT | `/api/v1/stores/me/logo` | Bearer Token |
+| DELETE | `/api/v1/stores/me/logo` | Bearer Token |
+| PUT | `/api/v1/stores/me/banner` | Bearer Token |
+| DELETE | `/api/v1/stores/me/banner` | Bearer Token |
+| GET | `/api/v1/admin/stores` | Admin |
+| PATCH | `/api/v1/admin/stores/:id/approve` | Admin |
+| PATCH | `/api/v1/admin/stores/:id/reject` | Admin |
+| GET | `/api/v1/categories` | Bearer Token (hanya kategori aktif) |
+| GET | `/api/v1/categories/:id` | Bearer Token |
+| POST | `/api/v1/categories` | Admin |
+| PATCH | `/api/v1/categories/:id` | Admin |
+| DELETE | `/api/v1/categories/:id` | Admin |
+| GET | `/api/v1/admin/categories` | Admin (termasuk nonaktif) |
+| POST | `/api/v1/products` | Bearer Token (toko `active`) |
+| GET | `/api/v1/products/me` | Bearer Token |
+| GET | `/api/v1/products/:id` | Bearer Token (pemilik atau admin) |
+| PATCH | `/api/v1/products/:id` | Bearer Token (pemilik) |
+| DELETE | `/api/v1/products/:id` | Bearer Token (pemilik) |
+| POST | `/api/v1/products/:id/variants` | Bearer Token (pemilik) |
+| PATCH | `/api/v1/products/:id/variants/:variantId` | Bearer Token (pemilik) |
+| DELETE | `/api/v1/products/:id/variants/:variantId` | Bearer Token (pemilik) |
+| POST | `/api/v1/products/:id/images` | Bearer Token (pemilik) |
+| PATCH | `/api/v1/products/:id/images/:imageId` | Bearer Token (pemilik) |
+| DELETE | `/api/v1/products/:id/images/:imageId` | Bearer Token (pemilik) |
+| GET | `/uploads/avatars/<file>` · `/uploads/stores/<file>` · `/uploads/products/<file>` | Public (file statis) |
 
 ### `GET /api/v1/users/me`
 
@@ -209,6 +239,36 @@ Menghapus foto profil user yang sedang login: `avatar_url` di-set `null`, file d
 | 404 | User tidak ditemukan, atau user tidak punya avatar (`"avatar not found"`) |
 | 500 | Gagal mengakses database |
 
+### Store (`/api/v1/stores`, `/api/v1/admin/stores`)
+
+Alur seller: daftar via `POST /stores` (status `pending`) → admin `PATCH /admin/stores/:id/approve` → role user naik `buyer` → `seller` dan toko menjadi `active`. `PATCH /admin/stores/:id/reject` menurunkan role `seller` → `buyer` dan menolak toko yang belum pernah aktif (`rejected`) atau men-suspend yang sudah aktif (`suspended`). Admin tidak pernah turun role. Approve/reject idempoten untuk status yang sama.
+
+Catatan penting:
+
+- **Role diambil dari claims JWT** — user yang baru di-approve harus **login ulang** agar token membawa role `seller`. Begitu pula admin yang dibuat/diubah langsung via SQL: **login ulang** setelah perubahan role.
+- Slug toko dibuat dari nama saat create dan **tidak berubah** saat rename (URL stabil); bentrok slug otomatis diberi sufiks acak.
+- Satu user maksimal satu toko (`409` bila daftar lagi).
+- `PUT /stores/me/logo` (maks. 1 MB) dan `PUT /stores/me/banner` (maks. 2 MB) menerima multipart field `logo`/`banner`; format divalidasi dari magic bytes (JPEG/PNG/WebP), file lama otomatis dihapus. Upload boleh dilakukan walau toko belum `active`.
+- `GET /admin/stores` mendukung pagination (`page`, `limit`) dan filter `status`.
+
+### Category (`/api/v1/categories`, `/api/v1/admin/categories`)
+
+Kategori dikelola admin (create/update/delete) dan dibaca user login. `GET /categories` hanya menampilkan kategori aktif; `GET /admin/categories` termasuk nonaktif. Hierarki via `parent_id` dengan pengecekan cycle saat re-parent; `parent_id: ""` mengembalikan kategori ke root. Level subtree dihitung ulang otomatis saat pindah parent. Delete ditolak `409` bila kategori masih punya subkategori atau produk aktif.
+
+### Product (`/api/v1/products`)
+
+Produk dibuat beserta minimal satu varian (`variants`, maks. 100). Semua operasi tulis hanya untuk **pemilik** (seller pemilik toko); akses seller lain dijawab `404` (bukan `403`, agar tidak membocorkan keberadaan data). Admin bisa membaca produk apa pun.
+
+Aturan bisnis:
+
+- Toko harus `active` untuk create produk (`403` bila `pending`/`suspended`); kategori harus aktif (`422` bila tidak).
+- **SKU unik per toko**, bukan global — toko berbeda boleh memakai SKU yang sama (`409` `"SKU already used in this store"` hanya untuk duplikat dalam satu toko).
+- Harga dalam rupiah utuh (`int64`, `1` = Rp 1). `min_price`/`max_price` produk dihitung otomatis dari varian aktif dan di-recompute setiap varian ditambah/diubah/dihapus.
+- Varian aktif terakhir tidak bisa dihapus (`409`); nonaktifkan dulu atau tambah varian lain.
+- `metadata` (produk) dan `attributes` (varian) berupa objek JSON maks. 4 KB; kirim `null` untuk meng-clear.
+- Slug produk stabil sejak create (tidak berubah saat rename).
+- Foto produk: `POST /products/:id/images` multipart field `image`, maks. 3 MB & 10 foto per produk (config `product.*`), format JPEG/PNG/WebP via magic bytes. Foto pertama otomatis menjadi primary; `PATCH {"is_primary": true}` memindahkan primary (hanya satu per produk); menghapus foto primary otomatis mempromosikan foto dengan `sort_order` terkecil. Menghapus produk menghapus semua varian + foto beserta file di disk.
+
 ## Struktur Proyek
 
 ```
@@ -222,7 +282,7 @@ GoCommerce/
 │   ├── model/               # DTO + response envelope
 │   ├── domain/              # AppError + sentinel
 │   ├── middleware/          # guard (auth/RBAC)
-│   ├── pkg/{jwt,otp,cache,storage} # utilitas murni
+│   ├── pkg/{jwt,otp,cache,storage,slug} # utilitas murni
 │   └── router/              # registrasi route
 ├── infrastructure/
 │   ├── app/                 # Fiber app + middleware + error handler
