@@ -205,6 +205,11 @@ func (ss *storeService) Approve(ctx context.Context, storeID uuid.UUID) (*model.
 		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to approve store")
 	}
 
+	// 1. Guard against approving non-pending stores.
+	if store.Status != entity.StoreStatusPending {
+		return nil, apperrors.Wrap(nil, http.StatusConflict, fmt.Sprintf("cannot approve store with status %s", store.Status))
+	}
+
 	// Role promotion is decided atomically inside the repository tx
 	// (only a buyer is promoted; an admin is never demoted).
 	if err := ss.StoreRepo.Approve(ctx, storeID, store.UserID); err != nil {
