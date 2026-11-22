@@ -73,10 +73,9 @@ func NewProductService(
 }
 
 func (ps *productService) Create(ctx context.Context, userID uuid.UUID, request model.CreateProductReq) (*model.ProductRes, error) {
-	log := ps.logger(ctx, "Create").WithField("user_id", userID.String())
+	log := serviceLogger(ctx, ps.Log, "Create").WithField("user_id", userID.String())
 
-	if err := ps.Validation.Struct(request); err != nil {
-		log.WithError(err).Error("validation failed")
+	if err := validateStruct(log, ps.Validation, request); err != nil {
 		return nil, err
 	}
 	if err := validateJSONObject(request.Metadata, "metadata"); err != nil {
@@ -162,7 +161,7 @@ func (ps *productService) Create(ctx context.Context, userID uuid.UUID, request 
 }
 
 func (ps *productService) Get(ctx context.Context, userID uuid.UUID, isAdmin bool, productID uuid.UUID) (*model.ProductRes, error) {
-	log := ps.logger(ctx, "Get").WithField("product_id", productID.String())
+	log := serviceLogger(ctx, ps.Log, "Get").WithField("product_id", productID.String())
 
 	product, err := ps.ProductRepo.GetDetail(ctx, productID)
 	if err != nil {
@@ -185,7 +184,7 @@ func (ps *productService) Get(ctx context.Context, userID uuid.UUID, isAdmin boo
 }
 
 func (ps *productService) ListMine(ctx context.Context, userID uuid.UUID, page, limit int) ([]model.ProductRes, int64, error) {
-	log := ps.logger(ctx, "ListMine").WithField("user_id", userID.String())
+	log := serviceLogger(ctx, ps.Log, "ListMine").WithField("user_id", userID.String())
 
 	store, err := requireActiveStore(ctx, ps.StoreRepo, userID)
 	if err != nil {
@@ -206,10 +205,9 @@ func (ps *productService) ListMine(ctx context.Context, userID uuid.UUID, page, 
 }
 
 func (ps *productService) Update(ctx context.Context, userID, productID uuid.UUID, request model.UpdateProductReq) (*model.ProductRes, error) {
-	log := ps.logger(ctx, "Update").WithField("product_id", productID.String())
+	log := serviceLogger(ctx, ps.Log, "Update").WithField("product_id", productID.String())
 
-	if err := ps.Validation.Struct(request); err != nil {
-		log.WithError(err).Error("validation failed")
+	if err := validateStruct(log, ps.Validation, request); err != nil {
 		return nil, err
 	}
 
@@ -268,7 +266,7 @@ func (ps *productService) Update(ctx context.Context, userID, productID uuid.UUI
 }
 
 func (ps *productService) Delete(ctx context.Context, userID, productID uuid.UUID) error {
-	log := ps.logger(ctx, "Delete").WithField("product_id", productID.String())
+	log := serviceLogger(ctx, ps.Log, "Delete").WithField("product_id", productID.String())
 
 	product, _, err := ownedProduct(ctx, ps.ProductRepo, ps.StoreRepo, userID, productID)
 	if err != nil {
@@ -301,10 +299,9 @@ func (ps *productService) Delete(ctx context.Context, userID, productID uuid.UUI
 }
 
 func (ps *productService) AddVariant(ctx context.Context, userID, productID uuid.UUID, request model.VariantReq) (*model.ProductRes, error) {
-	log := ps.logger(ctx, "AddVariant").WithField("product_id", productID.String())
+	log := serviceLogger(ctx, ps.Log, "AddVariant").WithField("product_id", productID.String())
 
-	if err := ps.Validation.Struct(request); err != nil {
-		log.WithError(err).Error("validation failed")
+	if err := validateStruct(log, ps.Validation, request); err != nil {
 		return nil, err
 	}
 	if err := validateJSONObject(request.Attributes, "attributes"); err != nil {
@@ -352,10 +349,9 @@ func (ps *productService) AddVariant(ctx context.Context, userID, productID uuid
 }
 
 func (ps *productService) UpdateVariant(ctx context.Context, userID, productID, variantID uuid.UUID, request model.UpdateVariantReq) (*model.ProductRes, error) {
-	log := ps.logger(ctx, "UpdateVariant").WithField("variant_id", variantID.String())
+	log := serviceLogger(ctx, ps.Log, "UpdateVariant").WithField("variant_id", variantID.String())
 
-	if err := ps.Validation.Struct(request); err != nil {
-		log.WithError(err).Error("validation failed")
+	if err := validateStruct(log, ps.Validation, request); err != nil {
 		return nil, err
 	}
 	if request.Attributes != nil {
@@ -436,7 +432,7 @@ func (ps *productService) UpdateVariant(ctx context.Context, userID, productID, 
 }
 
 func (ps *productService) DeleteVariant(ctx context.Context, userID, productID, variantID uuid.UUID) (*model.ProductRes, error) {
-	log := ps.logger(ctx, "DeleteVariant").WithField("variant_id", variantID.String())
+	log := serviceLogger(ctx, ps.Log, "DeleteVariant").WithField("variant_id", variantID.String())
 
 	product, _, err := ownedProduct(ctx, ps.ProductRepo, ps.StoreRepo, userID, productID)
 	if err != nil {
@@ -474,7 +470,7 @@ func (ps *productService) DeleteVariant(ctx context.Context, userID, productID, 
 }
 
 func (ps *productService) AddImage(ctx context.Context, userID, productID uuid.UUID, file *multipart.FileHeader) (*model.ProductRes, error) {
-	log := ps.logger(ctx, "AddImage").WithField("product_id", productID.String())
+	log := serviceLogger(ctx, ps.Log, "AddImage").WithField("product_id", productID.String())
 
 	if file == nil {
 		return nil, apperrors.Wrap(nil, http.StatusUnprocessableEntity, "image file is required")
@@ -532,10 +528,9 @@ func (ps *productService) AddImage(ctx context.Context, userID, productID uuid.U
 }
 
 func (ps *productService) UpdateImage(ctx context.Context, userID, productID, imageID uuid.UUID, request model.UpdateImageReq) (*model.ProductRes, error) {
-	log := ps.logger(ctx, "UpdateImage").WithField("image_id", imageID.String())
+	log := serviceLogger(ctx, ps.Log, "UpdateImage").WithField("image_id", imageID.String())
 
-	if err := ps.Validation.Struct(request); err != nil {
-		log.WithError(err).Error("validation failed")
+	if err := validateStruct(log, ps.Validation, request); err != nil {
 		return nil, err
 	}
 
@@ -587,7 +582,7 @@ func (ps *productService) UpdateImage(ctx context.Context, userID, productID, im
 }
 
 func (ps *productService) DeleteImage(ctx context.Context, userID, productID, imageID uuid.UUID) (*model.ProductRes, error) {
-	log := ps.logger(ctx, "DeleteImage").WithField("image_id", imageID.String())
+	log := serviceLogger(ctx, ps.Log, "DeleteImage").WithField("image_id", imageID.String())
 
 	product, _, err := ownedProduct(ctx, ps.ProductRepo, ps.StoreRepo, userID, productID)
 	if err != nil {
@@ -768,12 +763,4 @@ func rawOrNull(s *string) []byte {
 		return nil
 	}
 	return []byte(*s)
-}
-
-func (ps *productService) logger(ctx context.Context, functionName string) *logrus.Entry {
-	reqID, _ := ctx.Value("request_id").(string)
-	return ps.Log.WithFields(logrus.Fields{
-		"request_id": reqID,
-		"function":   functionName,
-	})
 }

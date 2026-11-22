@@ -67,10 +67,9 @@ func NewStoreService(
 }
 
 func (ss *storeService) Create(ctx context.Context, userID uuid.UUID, request model.CreateStoreReq) (*model.StoreRes, error) {
-	log := ss.logger(ctx, "Create").WithField("user_id", userID.String())
+	log := serviceLogger(ctx, ss.Log, "Create").WithField("user_id", userID.String())
 
-	if err := ss.Validation.Struct(request); err != nil {
-		log.WithError(err).Error("validation failed")
+	if err := validateStruct(log, ss.Validation, request); err != nil {
 		return nil, err
 	}
 
@@ -117,7 +116,7 @@ func (ss *storeService) Create(ctx context.Context, userID uuid.UUID, request mo
 }
 
 func (ss *storeService) GetMine(ctx context.Context, userID uuid.UUID) (*model.StoreRes, error) {
-	log := ss.logger(ctx, "GetMine").WithField("user_id", userID.String())
+	log := serviceLogger(ctx, ss.Log, "GetMine").WithField("user_id", userID.String())
 
 	store, err := ss.StoreRepo.GetByUserID(ctx, userID)
 	if err != nil {
@@ -131,7 +130,7 @@ func (ss *storeService) GetMine(ctx context.Context, userID uuid.UUID) (*model.S
 }
 
 func (ss *storeService) UpdateMine(ctx context.Context, userID uuid.UUID, request model.UpdateStoreReq) (*model.StoreRes, error) {
-	log := ss.logger(ctx, "UpdateMine").WithField("user_id", userID.String())
+	log := serviceLogger(ctx, ss.Log, "UpdateMine").WithField("user_id", userID.String())
 
 	fields := make(map[string]any, 2)
 	if request.Name != nil {
@@ -147,8 +146,7 @@ func (ss *storeService) UpdateMine(ctx context.Context, userID uuid.UUID, reques
 		return nil, apperrors.Wrap(nil, http.StatusUnprocessableEntity, "no fields to update")
 	}
 
-	if err := ss.Validation.Struct(request); err != nil {
-		log.WithError(err).Error("validation failed")
+	if err := validateStruct(log, ss.Validation, request); err != nil {
 		return nil, err
 	}
 
@@ -178,7 +176,7 @@ func (ss *storeService) UpdateMine(ctx context.Context, userID uuid.UUID, reques
 }
 
 func (ss *storeService) List(ctx context.Context, status string, page, limit int) ([]model.StoreRes, int64, error) {
-	log := ss.logger(ctx, "List")
+	log := serviceLogger(ctx, ss.Log, "List")
 
 	stores, total, err := ss.StoreRepo.ListByStatus(ctx, status, page, limit)
 	if err != nil {
@@ -194,7 +192,7 @@ func (ss *storeService) List(ctx context.Context, status string, page, limit int
 }
 
 func (ss *storeService) Approve(ctx context.Context, storeID uuid.UUID) (*model.StoreRes, error) {
-	log := ss.logger(ctx, "Approve").WithField("store_id", storeID.String())
+	log := serviceLogger(ctx, ss.Log, "Approve").WithField("store_id", storeID.String())
 
 	store, err := ss.StoreRepo.GetByID(ctx, storeID)
 	if err != nil {
@@ -228,7 +226,7 @@ func (ss *storeService) Approve(ctx context.Context, storeID uuid.UUID) (*model.
 }
 
 func (ss *storeService) Reject(ctx context.Context, storeID uuid.UUID) (*model.StoreRes, error) {
-	log := ss.logger(ctx, "Reject").WithField("store_id", storeID.String())
+	log := serviceLogger(ctx, ss.Log, "Reject").WithField("store_id", storeID.String())
 
 	store, err := ss.StoreRepo.GetByID(ctx, storeID)
 	if err != nil {
@@ -277,7 +275,7 @@ func (ss *storeService) DeleteBanner(ctx context.Context, userID uuid.UUID) (*mo
 // updateStoreImage saves the file first, updates the DB column, then removes
 // the previous file (best-effort). Mirrors userService.UpdateAvatar.
 func (ss *storeService) updateStoreImage(ctx context.Context, userID uuid.UUID, file *multipart.FileHeader, column string, maxSize int64, fn, label string) (*model.StoreRes, error) {
-	log := ss.logger(ctx, fn).WithField("user_id", userID.String())
+	log := serviceLogger(ctx, ss.Log, fn).WithField("user_id", userID.String())
 
 	if file.Size > maxSize {
 		return nil, apperrors.Wrap(nil, http.StatusUnprocessableEntity,
@@ -327,7 +325,7 @@ func (ss *storeService) updateStoreImage(ctx context.Context, userID uuid.UUID, 
 }
 
 func (ss *storeService) deleteStoreImage(ctx context.Context, userID uuid.UUID, column, fn, label string) (*model.StoreRes, error) {
-	log := ss.logger(ctx, fn).WithField("user_id", userID.String())
+	log := serviceLogger(ctx, ss.Log, fn).WithField("user_id", userID.String())
 
 	store, err := ss.StoreRepo.GetByUserID(ctx, userID)
 	if err != nil {
@@ -401,12 +399,4 @@ func storeResponse(store *entity.Store) *model.StoreRes {
 		CreatedAt:      store.CreatedAt,
 		UpdatedAt:      store.UpdatedAt,
 	}
-}
-
-func (ss *storeService) logger(ctx context.Context, functionName string) *logrus.Entry {
-	reqID, _ := ctx.Value("request_id").(string)
-	return ss.Log.WithFields(logrus.Fields{
-		"request_id": reqID,
-		"function":   functionName,
-	})
 }

@@ -83,10 +83,9 @@ func NewAuthService(
 
 func (as *authService) SignUp(ctx context.Context, request model.SignUpReq) (*model.SignUpRes, error) {
 	email := strings.ToLower(strings.TrimSpace(request.Email))
-	log := as.logger(ctx, "SignUp").WithField("email", email)
+	log := serviceLogger(ctx, as.Log, "SignUp").WithField("email", email)
 
-	if err := as.Validation.Struct(request); err != nil {
-		log.WithError(err).Error("validation failed")
+	if err := validateStruct(log, as.Validation, request); err != nil {
 		return nil, err
 	}
 
@@ -184,10 +183,9 @@ func (as *authService) SignUp(ctx context.Context, request model.SignUpReq) (*mo
 
 func (as *authService) VerifyOTP(ctx context.Context, request model.VerifyOTP) (*model.TokenPairRes, error) {
 	email := strings.ToLower(strings.TrimSpace(request.Email))
-	log := as.logger(ctx, "VerifyOTP").WithField("email", email)
+	log := serviceLogger(ctx, as.Log, "VerifyOTP").WithField("email", email)
 
-	if err := as.Validation.Struct(request); err != nil {
-		log.WithError(err).Error("validation failed")
+	if err := validateStruct(log, as.Validation, request); err != nil {
 		return nil, err
 	}
 
@@ -286,10 +284,9 @@ func (as *authService) VerifyOTP(ctx context.Context, request model.VerifyOTP) (
 
 func (as *authService) ResendOTP(ctx context.Context, request model.ResendOTPReq) (*model.ResendOTPRes, error) {
 	email := strings.ToLower(strings.TrimSpace(request.Email))
-	log := as.logger(ctx, "ResendOTP").WithField("email", email)
+	log := serviceLogger(ctx, as.Log, "ResendOTP").WithField("email", email)
 
-	if err := as.Validation.Struct(request); err != nil {
-		log.WithError(err).Error("validation failed")
+	if err := validateStruct(log, as.Validation, request); err != nil {
 		return nil, err
 	}
 
@@ -357,10 +354,9 @@ func (as *authService) ResendOTP(ctx context.Context, request model.ResendOTPReq
 
 func (as *authService) Login(ctx context.Context, request model.LoginReq) (*model.TokenPairRes, error) {
 	email := strings.ToLower(strings.TrimSpace(request.Email))
-	log := as.logger(ctx, "Login").WithField("email", email)
+	log := serviceLogger(ctx, as.Log, "Login").WithField("email", email)
 
-	if err := as.Validation.Struct(request); err != nil {
-		log.WithError(err).Error("validation failed")
+	if err := validateStruct(log, as.Validation, request); err != nil {
 		return nil, err
 	}
 
@@ -387,10 +383,9 @@ func (as *authService) Login(ctx context.Context, request model.LoginReq) (*mode
 }
 
 func (as *authService) RefreshToken(ctx context.Context, request model.RefreshTokenReq) (*model.TokenPairRes, error) {
-	log := as.logger(ctx, "RefreshToken")
+	log := serviceLogger(ctx, as.Log, "RefreshToken")
 
-	if err := as.Validation.Struct(request); err != nil {
-		log.WithError(err).Error("validation failed")
+	if err := validateStruct(log, as.Validation, request); err != nil {
 		return nil, err
 	}
 
@@ -449,7 +444,7 @@ func (as *authService) RefreshToken(ctx context.Context, request model.RefreshTo
 }
 
 func (as *authService) Logout(ctx context.Context, userID uuid.UUID, sessionID string, exp *jwt.NumericDate) error {
-	log := as.logger(ctx, "Logout").WithFields(logrus.Fields{
+	log := serviceLogger(ctx, as.Log, "Logout").WithFields(logrus.Fields{
 		"user_id":    userID.String(),
 		"session_id": sessionID,
 	})
@@ -516,12 +511,4 @@ func signupKeysFor(email string) signupKeys {
 		Attempts:    "signup:attempts:" + email,
 		ResendCount: "signup:resend:" + email,
 	}
-}
-
-func (as *authService) logger(ctx context.Context, functionName string) *logrus.Entry {
-	reqID, _ := ctx.Value("request_id").(string)
-	return as.Log.WithFields(logrus.Fields{
-		"request_id": reqID,
-		"function":   functionName,
-	})
 }

@@ -47,10 +47,9 @@ func NewCategoryService(
 }
 
 func (cs *categoryService) Create(ctx context.Context, request model.CreateCategoryReq) (*model.CategoryRes, error) {
-	log := cs.logger(ctx, "Create")
+	log := serviceLogger(ctx, cs.Log, "Create")
 
-	if err := cs.Validation.Struct(request); err != nil {
-		log.WithError(err).Error("validation failed")
+	if err := validateStruct(log, cs.Validation, request); err != nil {
 		return nil, err
 	}
 
@@ -95,7 +94,7 @@ func (cs *categoryService) Create(ctx context.Context, request model.CreateCateg
 }
 
 func (cs *categoryService) Get(ctx context.Context, id uuid.UUID) (*model.CategoryRes, error) {
-	log := cs.logger(ctx, "Get")
+	log := serviceLogger(ctx, cs.Log, "Get")
 
 	cat, err := cs.CatRepo.GetActiveByID(ctx, id)
 	if err != nil {
@@ -109,7 +108,7 @@ func (cs *categoryService) Get(ctx context.Context, id uuid.UUID) (*model.Catego
 }
 
 func (cs *categoryService) List(ctx context.Context, activeOnly bool, page, limit int) ([]model.CategoryRes, int64, error) {
-	log := cs.logger(ctx, "List")
+	log := serviceLogger(ctx, cs.Log, "List")
 
 	cats, total, err := cs.CatRepo.List(ctx, activeOnly, page, limit)
 	if err != nil {
@@ -125,7 +124,7 @@ func (cs *categoryService) List(ctx context.Context, activeOnly bool, page, limi
 }
 
 func (cs *categoryService) Update(ctx context.Context, id uuid.UUID, request model.UpdateCategoryReq) (*model.CategoryRes, error) {
-	log := cs.logger(ctx, "Update").WithField("category_id", id.String())
+	log := serviceLogger(ctx, cs.Log, "Update").WithField("category_id", id.String())
 
 	cat, err := cs.CatRepo.GetByID(ctx, id)
 	if err != nil {
@@ -192,8 +191,7 @@ func (cs *categoryService) Update(ctx context.Context, id uuid.UUID, request mod
 		return nil, apperrors.Wrap(nil, http.StatusUnprocessableEntity, "no fields to update")
 	}
 
-	if err := cs.Validation.Struct(request); err != nil {
-		log.WithError(err).Error("validation failed")
+	if err := validateStruct(log, cs.Validation, request); err != nil {
 		return nil, err
 	}
 
@@ -223,7 +221,7 @@ func (cs *categoryService) Update(ctx context.Context, id uuid.UUID, request mod
 }
 
 func (cs *categoryService) Delete(ctx context.Context, id uuid.UUID) error {
-	log := cs.logger(ctx, "Delete").WithField("category_id", id.String())
+	log := serviceLogger(ctx, cs.Log, "Delete").WithField("category_id", id.String())
 
 	cat, err := cs.CatRepo.GetByID(ctx, id)
 	if err != nil {
@@ -312,12 +310,4 @@ func categoryResponse(cat *entity.Category) *model.CategoryRes {
 		CreatedAt:   cat.CreatedAt,
 		UpdatedAt:   cat.UpdatedAt,
 	}
-}
-
-func (cs *categoryService) logger(ctx context.Context, functionName string) *logrus.Entry {
-	reqID, _ := ctx.Value("request_id").(string)
-	return cs.Log.WithFields(logrus.Fields{
-		"request_id": reqID,
-		"function":   functionName,
-	})
 }

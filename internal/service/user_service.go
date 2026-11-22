@@ -59,7 +59,7 @@ func NewUserService(
 }
 
 func (us *userService) GetProfile(ctx context.Context, userID uuid.UUID) (*model.UserProfileRes, error) {
-	log := us.logger(ctx, "GetProfile").WithField("user_id", userID.String())
+	log := serviceLogger(ctx, us.Log, "GetProfile").WithField("user_id", userID.String())
 	cacheKey := profileCacheKey(userID)
 
 	cachedUser, err := cache.Get[model.UserProfileRes](ctx, us.Redis, cacheKey)
@@ -85,7 +85,7 @@ func (us *userService) GetProfile(ctx context.Context, userID uuid.UUID) (*model
 }
 
 func (us *userService) UpdateProfile(ctx context.Context, userID uuid.UUID, request model.UpdateProfileReq) (*model.UserProfileRes, error) {
-	log := us.logger(ctx, "UpdateProfile").WithField("user_id", userID.String())
+	log := serviceLogger(ctx, us.Log, "UpdateProfile").WithField("user_id", userID.String())
 
 	fields := make(map[string]any, 3)
 
@@ -116,8 +116,7 @@ func (us *userService) UpdateProfile(ctx context.Context, userID uuid.UUID, requ
 		return nil, apperrors.Wrap(nil, http.StatusUnprocessableEntity, "no fields to update")
 	}
 
-	if err := us.Validation.Struct(request); err != nil {
-		log.WithError(err).Error("validation failed")
+	if err := validateStruct(log, us.Validation, request); err != nil {
 		return nil, err
 	}
 
@@ -145,7 +144,7 @@ func (us *userService) UpdateProfile(ctx context.Context, userID uuid.UUID, requ
 }
 
 func (us *userService) UpdateAvatar(ctx context.Context, userID uuid.UUID, file *multipart.FileHeader) (*model.UserProfileRes, error) {
-	log := us.logger(ctx, "UpdateAvatar").WithField("user_id", userID.String())
+	log := serviceLogger(ctx, us.Log, "UpdateAvatar").WithField("user_id", userID.String())
 
 	if file.Size > us.MaxAvatarSize {
 		return nil, apperrors.Wrap(nil, http.StatusUnprocessableEntity,
@@ -191,7 +190,7 @@ func (us *userService) UpdateAvatar(ctx context.Context, userID uuid.UUID, file 
 }
 
 func (us *userService) DeleteAvatar(ctx context.Context, userID uuid.UUID) (*model.UserProfileRes, error) {
-	log := us.logger(ctx, "DeleteAvatar").WithField("user_id", userID.String())
+	log := serviceLogger(ctx, us.Log, "DeleteAvatar").WithField("user_id", userID.String())
 
 	user, err := us.getActiveUser(ctx, log, userID)
 	if err != nil {
@@ -262,12 +261,4 @@ func profileResponse(user *entity.User) *model.UserProfileRes {
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 	}
-}
-
-func (us *userService) logger(ctx context.Context, functionName string) *logrus.Entry {
-	reqID, _ := ctx.Value("request_id").(string)
-	return us.Log.WithFields(logrus.Fields{
-		"request_id": reqID,
-		"function":   functionName,
-	})
 }
