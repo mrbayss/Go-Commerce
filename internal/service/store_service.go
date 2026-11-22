@@ -203,9 +203,9 @@ func (ss *storeService) Approve(ctx context.Context, storeID uuid.UUID) (*model.
 		return nil, apperrors.Wrap(err, http.StatusInternalServerError, "failed to approve store")
 	}
 
-	// 1. Guard against approving non-pending stores.
-	if store.Status != entity.StoreStatusPending {
-		return nil, apperrors.Wrap(nil, http.StatusConflict, fmt.Sprintf("cannot approve store with status %s", store.Status))
+	// 1. Idempotent check: if the store is already active, return 200 no-op.
+	if store.Status == entity.StoreStatusActive {
+		return storeResponse(store), nil
 	}
 
 	// Role promotion is decided atomically inside the repository tx

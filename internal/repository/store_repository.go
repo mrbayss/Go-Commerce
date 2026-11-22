@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"errors"
 
 	"github.com/google/uuid"
 	"github.com/mrbayss/Go-Commerce/internal/entity"
@@ -63,9 +62,10 @@ func (r *storeRepository) ListByStatus(ctx context.Context, status string, page,
 }
 
 // Approve sets the store active and promotes the owner to seller — atomically.
-// The store row is locked so only a pending store can be approved, and the
-// role update is conditional in SQL (only a buyer is promoted), so a concurrent
-// role change can never demote an admin or act on a stale read.
+// It is idempotent (already active -> no-op) and supports reactivation of
+// rejected or suspended stores. The store row is locked so role promotion and
+// status update occur consistently. Role update is conditional in SQL (only
+// a buyer is promoted), so a concurrent role change can never demote an admin.
 func (r *storeRepository) Approve(ctx context.Context, storeID, userID uuid.UUID) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var store entity.Store
@@ -73,8 +73,8 @@ func (r *storeRepository) Approve(ctx context.Context, storeID, userID uuid.UUID
 			return err
 		}
 
-		if store.Status != entity.StoreStatusPending {
-			return errors.New("store is not pending approval")
+		if store.Status == entity.StoreStatusActive {
+			return nil
 		}
 
 		if err := tx.Model(&entity.Store{}).Where("id = ?", storeID).Update("status", entity.StoreStatusActive).Error; err != nil {
