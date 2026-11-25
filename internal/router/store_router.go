@@ -17,8 +17,8 @@ func SetupStoreRoutes(api fiber.Router, sc *controller.StoreController, requireA
 	stores.Put("/me/banner", requireAuth, sc.UpdateBanner)
 	stores.Delete("/me/banner", requireAuth, sc.DeleteBanner)
 
-	admin := api.Group("/admin/stores")
-	admin.Get("", requireAuth, requireAdmin, sc.List)
-	admin.Patch("/:id/approve", requireAuth, requireAdmin, sc.Approve)
-	admin.Patch("/:id/reject", requireAuth, requireAdmin, sc.Reject)
+	admin := api.Group("/admin/stores", requireAuth, requireAdmin)
+	admin.Get("", sc.List)
+	admin.Patch("/:id/approve", sc.Approve)
+	admin.Patch("/:id/reject", sc.Reject)
 }

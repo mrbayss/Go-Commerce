@@ -15,6 +15,6 @@ func SetupCategoryRoutes(api fiber.Router, cc *controller.CategoryController, re
 	cats.Patch("/:id", requireAuth, requireAdmin, cc.Update)
 	cats.Delete("/:id", requireAuth, requireAdmin, cc.Delete)
 
-	adminCats := api.Group("/admin/categories")
-	adminCats.Get("", requireAuth, requireAdmin, cc.ListAll) // includes inactive
+	adminCats := api.Group("/admin/categories", requireAuth, requireAdmin)
+	adminCats.Get("", cc.ListAll) // includes inactive
 }
